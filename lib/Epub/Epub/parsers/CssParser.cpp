@@ -13,7 +13,6 @@
 #include "CssTrackedProperties.h"
 #ifdef ARDUINO
 #include <Esp.h>  // ESP.getFreeHeap() for the CSS heap-reserve guard
-#include <esp_heap_caps.h>
 #endif
 
 #include <algorithm>
@@ -29,18 +28,6 @@ constexpr size_t kMaxCssRules = 2048;
 constexpr uint32_t kCssParserCacheMagic = 0x43535042;  // "CSPB"
 constexpr uint16_t kCssParserCacheVersion = 3;
 constexpr uint8_t kCssPropertyInvalid = 0xFF;
-
-#ifdef ARDUINO
-void logHeap(const char* stage, const std::string& sourcePath, const size_t bytes, const size_t rules,
-             const uint32_t startFree = 0) {
-  const uint32_t freeHeap = ESP.getFreeHeap();
-  const int32_t delta = startFree == 0 ? 0 : static_cast<int32_t>(freeHeap) - static_cast<int32_t>(startFree);
-  Serial.printf("[%lu] [HEAP][CSSP] %s src=%s bytes=%u rules=%u free=%u largest=%u min=%u delta=%ld\n", millis(),
-                stage, sourcePath.empty() ? "(inline)" : sourcePath.c_str(), static_cast<unsigned>(bytes),
-                static_cast<unsigned>(rules), static_cast<unsigned>(freeHeap), static_cast<unsigned>(ESP.getMaxAllocHeap()),
-                static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT)), static_cast<long>(delta));
-}
-#endif
 
 uint8_t cssPropertyId(const std::string& name) {
   static const char* const kNames[] = {
@@ -724,19 +711,10 @@ bool CssParser::loadBinary(FsFile& file) {
 
 void CssParser::parse(const std::string& cssContent, const std::string& sourcePath, uint32_t minFreeHeapBytes,
                       const UsageFilter* usageFilter) {
-#ifdef ARDUINO
-  const uint32_t startFreeHeap = ESP.getFreeHeap();
-  uint32_t minSeenFreeHeap = startFreeHeap;
-  uint32_t nextHeapDropLog = startFreeHeap > 4096 ? startFreeHeap - 4096 : 0;
-  logHeap("parse-start", sourcePath, cssContent.length(), rules.size(), startFreeHeap);
-#endif
   uint16_t filteredRules = 0;
 
   if (cssContent.length() > 50 * 1024) {
     Serial.printf("[CSSP] Skipping large CSS content (%d bytes)\n", (int)cssContent.length());
-#ifdef ARDUINO
-    logHeap("parse-skip-large", sourcePath, cssContent.length(), rules.size(), startFreeHeap);
-#endif
     return;
   }
 
@@ -848,16 +826,6 @@ void CssParser::parse(const std::string& cssContent, const std::string& sourcePa
           properties_.push_back(std::move(prop));
         }
         rules.push_back(std::move(rule));
-#ifdef ARDUINO
-        const uint32_t freeHeap = ESP.getFreeHeap();
-        if (freeHeap < minSeenFreeHeap) {
-          minSeenFreeHeap = freeHeap;
-        }
-        if (freeHeap <= nextHeapDropLog) {
-          logHeap("parse-new-low", sourcePath, pos, rules.size(), startFreeHeap);
-          nextHeapDropLog = freeHeap > 4096 ? freeHeap - 4096 : 0;
-        }
-#endif
       } else {
         Serial.printf("[CSSP] Reached max rules limit (%u)\n", static_cast<unsigned>(kMaxCssRules));
         break;
@@ -873,13 +841,6 @@ void CssParser::parse(const std::string& cssContent, const std::string& sourcePa
   if (usageFilter != nullptr && !usageFilter->empty()) {
     Serial.printf("[CSSP] Chapter CSS filter skipped %u rules\n", static_cast<unsigned>(filteredRules));
   }
-#ifdef ARDUINO
-  logHeap("parse-end", sourcePath, len, rules.size(), startFreeHeap);
-  Serial.printf("[%lu] [HEAP][CSSP] parse-local-low src=%s minSeen=%u start=%u drop=%ld\n", millis(),
-                sourcePath.empty() ? "(inline)" : sourcePath.c_str(), static_cast<unsigned>(minSeenFreeHeap),
-                static_cast<unsigned>(startFreeHeap),
-                static_cast<long>(static_cast<int32_t>(startFreeHeap) - static_cast<int32_t>(minSeenFreeHeap)));
-#endif
 }
 
 void CssParser::parsePropertiesForDimensions(const std::string& propertiesStr, CssProperties& properties) const {

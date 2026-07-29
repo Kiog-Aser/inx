@@ -8,7 +8,6 @@
 #include <Arduino.h>
 #include <GfxRenderer.h>
 #include <Utf8.h>
-#include <esp_heap_caps.h>
 
 #include <algorithm>
 #include <cmath>
@@ -27,19 +26,6 @@ namespace {
 constexpr char SOFT_HYPHEN_UTF8[] = "\xC2\xAD";
 constexpr size_t SOFT_HYPHEN_BYTES = 2;
 constexpr uint8_t kScriptScalePct = 70;
-constexpr size_t kHeapLogMinWords = 1;
-
-void logParsedTextHeap(const char* stage, const size_t words, const size_t lines, const uint32_t startFree) {
-  if (words < kHeapLogMinWords) {
-    return;
-  }
-  const uint32_t freeHeap = ESP.getFreeHeap();
-  const int32_t delta = static_cast<int32_t>(freeHeap) - static_cast<int32_t>(startFree);
-  Serial.printf("[%lu] [HEAP][TXT] %s words=%u lines=%u free=%u largest=%u min=%u delta=%ld\n", millis(),
-                stage, static_cast<unsigned>(words), static_cast<unsigned>(lines), static_cast<unsigned>(freeHeap),
-                static_cast<unsigned>(ESP.getMaxAllocHeap()),
-                static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT)), static_cast<long>(delta));
-}
 
 template <typename T>
 std::vector<T> moveListPrefixToVector(std::list<T>& values, const size_t count) {
@@ -305,18 +291,13 @@ void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
     return;
   }
 
-  const uint32_t layoutStartFree = ESP.getFreeHeap();
-  const size_t startWordCount = words.size();
-  logParsedTextHeap("layout-start", startWordCount, 0, layoutStartFree);
   applyParagraphIndent(renderer, fontId);
-  logParsedTextHeap("after-indent", startWordCount, 0, layoutStartFree);
 
   const int pageWidth = viewportWidth;
   // The word-spacing setting scales the natural inter-word space; it is baked into the line layout (xpos).
   const int spaceWidth =
       std::max(1, static_cast<int>(std::lround(renderer.text.getSpaceWidth(fontId) * wordSpacingFactor_)));
   auto wordWidths = calculateWordWidths(renderer, fontId);
-  logParsedTextHeap("after-widths", startWordCount, 0, layoutStartFree);
   std::vector<size_t> lineBreakIndices;
   const int dropW = static_cast<int>(leftIndentWidth);
   const int dropL = static_cast<int>(leftIndentLineCount);
@@ -325,16 +306,13 @@ void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
   } else {
     lineBreakIndices = computeLineBreaks(renderer, fontId, pageWidth, spaceWidth, wordWidths, dropW, dropL);
   }
-  logParsedTextHeap("after-breaks", startWordCount, lineBreakIndices.size(), layoutStartFree);
   const size_t lineCount = includeLastLine ? lineBreakIndices.size() : lineBreakIndices.size() - 1;
   const std::vector<uint8_t> joinPreviousSnapshot =
       hasJoinedWords_ ? std::vector<uint8_t>(wordJoinPrevious.begin(), wordJoinPrevious.end()) : std::vector<uint8_t>();
-  logParsedTextHeap("after-join-snapshot", startWordCount, lineBreakIndices.size(), layoutStartFree);
 
   for (size_t i = 0; i < lineCount; ++i) {
     extractLine(i, pageWidth, spaceWidth, wordWidths, lineBreakIndices, joinPreviousSnapshot, processLine);
   }
-  logParsedTextHeap("after-extract", startWordCount, lineBreakIndices.size(), layoutStartFree);
 }
 
 std::vector<uint16_t> ParsedText::calculateWordWidths(const GfxRenderer& renderer, const int fontId) {

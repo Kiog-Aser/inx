@@ -131,8 +131,6 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
   xSemaphoreGive(renderingMutex);
   updateRequired = true;
   vTaskDelay(pdMS_TO_TICKS(450));
-  Serial.printf("[%lu] [OTA] free heap before update check: %u bytes\n", millis(),
-                static_cast<unsigned>(ESP.getFreeHeap()));
 
   const auto res = updater.checkForUpdate();
   if (res != OtaUpdater::OK) {

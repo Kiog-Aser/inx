@@ -13,7 +13,6 @@
 #include <ImageRender.h>
 #include <SDCardManager.h>
 #include <Utf8.h>
-#include <esp_heap_caps.h>
 #include <expat.h>
 
 #include <algorithm>
@@ -36,17 +35,6 @@ constexpr size_t MIN_SIZE_FOR_POPUP = 30 * 1024;
 constexpr size_t STREAMING_TEXTBLOCK_WORD_LIMIT = 64;
 
 namespace {
-
-void logChapterHeap(const char* stage, const std::string& internalPath, const std::string& tmpPath,
-                    const uint32_t startFree = 0, const uint32_t bytes = 0, const uint32_t pages = 0) {
-  const uint32_t freeHeap = ESP.getFreeHeap();
-  const int32_t delta = startFree == 0 ? 0 : static_cast<int32_t>(freeHeap) - static_cast<int32_t>(startFree);
-  Serial.printf(
-      "[%lu] [HEAP][CHP] %s internal=%s tmp=%s bytes=%lu pages=%lu free=%u largest=%u min=%u delta=%ld\n", millis(),
-      stage, internalPath.c_str(), tmpPath.c_str(), static_cast<unsigned long>(bytes), static_cast<unsigned long>(pages),
-      static_cast<unsigned>(freeHeap), static_cast<unsigned>(ESP.getMaxAllocHeap()),
-      static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT)), static_cast<long>(delta));
-}
 
 bool hasJpegExt(const std::string& path) {
   return StringUtils::checkFileExtension(path, ".jpg") || StringUtils::checkFileExtension(path, ".jpeg");
@@ -616,33 +604,22 @@ void ChapterHtmlSlimParser::prefetchImageFromImgAttributes(const XML_Char** atts
 }
 
 bool ChapterHtmlSlimParser::parseHtmlThroughExpat(const bool callProgressPopup) {
-  const uint32_t passStartFree = ESP.getFreeHeap();
-  uint32_t minSeenFreeHeap = passStartFree;
-  uint32_t minSeenAtByte = 0;
-  uint32_t nextHeapDropLog = passStartFree > 4096 ? passStartFree - 4096 : 0;
-  const char* passName = imagePrefetchPassOnly_ ? "expat-image-prefetch" : "expat-layout";
-  logChapterHeap(passName, internalPath, filepath, passStartFree);
-
   const XML_Parser parser = XML_ParserCreate(nullptr);
   if (!parser) {
-    Serial.printf("[%lu] [SCT] Expat parser allocation failed chapter=%s internal=%s heap=%u\n", millis(),
-                  filepath.c_str(), internalPath.c_str(), static_cast<unsigned>(ESP.getFreeHeap()));
-    logChapterHeap("expat-parser-alloc-failed", internalPath, filepath, passStartFree);
+    Serial.printf("[%lu] [SCT] Expat parser allocation failed chapter=%s internal=%s\n", millis(), filepath.c_str(),
+                  internalPath.c_str());
     return false;
   }
 
   FsFile file;
   if (!SdMan.openFileForRead("EHP", filepath, file)) {
-    Serial.printf("[%lu] [SCT] Failed to open chapter temp HTML path=%s internal=%s heap=%u\n", millis(),
-                  filepath.c_str(), internalPath.c_str(), static_cast<unsigned>(ESP.getFreeHeap()));
+    Serial.printf("[%lu] [SCT] Failed to open chapter temp HTML path=%s internal=%s\n", millis(), filepath.c_str(),
+                  internalPath.c_str());
     XML_ParserFree(parser);
-    logChapterHeap("expat-open-failed", internalPath, filepath, passStartFree);
     return false;
   }
 
   const uint32_t fileSize = file.size();
-  logChapterHeap(imagePrefetchPassOnly_ ? "expat-image-prefetch-open" : "expat-layout-open", internalPath, filepath,
-                 passStartFree, fileSize);
   if (callProgressPopup && popupFn && fileSize >= MIN_SIZE_FOR_POPUP) {
     popupFn();
   }
@@ -682,38 +659,19 @@ bool ChapterHtmlSlimParser::parseHtmlThroughExpat(const bool callProgressPopup) 
       failByte = XML_GetCurrentByteIndex(parser);
       break;
     }
-    const uint32_t freeHeap = ESP.getFreeHeap();
-    if (freeHeap < minSeenFreeHeap) {
-      minSeenFreeHeap = freeHeap;
-      minSeenAtByte = bytesReadTotal;
-    }
-    if (freeHeap <= nextHeapDropLog) {
-      logChapterHeap(imagePrefetchPassOnly_ ? "expat-image-prefetch-new-low" : "expat-layout-new-low", internalPath,
-                     filepath, passStartFree, bytesReadTotal);
-      nextHeapDropLog = freeHeap > 4096 ? freeHeap - 4096 : 0;
-    }
   } while (!done);
 
   XML_ParserFree(parser);
   file.close();
-  logChapterHeap(parseOk ? (imagePrefetchPassOnly_ ? "expat-image-prefetch-end" : "expat-layout-end")
-                         : (imagePrefetchPassOnly_ ? "expat-image-prefetch-error" : "expat-layout-error"),
-                 internalPath, filepath, passStartFree, bytesReadTotal);
-  Serial.printf("[%lu] [HEAP][CHP] %s-local-low internal=%s minSeen=%u atByte=%lu start=%u drop=%ld\n", millis(),
-                imagePrefetchPassOnly_ ? "expat-image-prefetch" : "expat-layout", internalPath.c_str(),
-                static_cast<unsigned>(minSeenFreeHeap), static_cast<unsigned long>(minSeenAtByte),
-                static_cast<unsigned>(passStartFree),
-                static_cast<long>(static_cast<int32_t>(passStartFree) - static_cast<int32_t>(minSeenFreeHeap)));
   if (!parseOk) {
     const char* pass = imagePrefetchPassOnly_ ? "image-prefetch" : "layout";
     const char* errorText = xmlError == XML_ERROR_NONE ? "" : XML_ErrorString(xmlError);
     Serial.printf(
         "[%lu] [SCT] parseHtmlThroughExpat failed pass=%s reason=%s xml=%d %s line=%lu col=%lu byte=%ld size=%lu "
-        "chapter=%s internal=%s heap=%u\n",
+        "chapter=%s internal=%s\n",
         millis(), pass, failReason ? failReason : "unknown", static_cast<int>(xmlError), errorText ? errorText : "",
         static_cast<unsigned long>(failLine), static_cast<unsigned long>(failColumn), static_cast<long>(failByte),
-        static_cast<unsigned long>(fileSize), filepath.c_str(), internalPath.c_str(),
-        static_cast<unsigned>(ESP.getFreeHeap()));
+        static_cast<unsigned long>(fileSize), filepath.c_str(), internalPath.c_str());
   }
   return parseOk;
 }
@@ -721,30 +679,17 @@ bool ChapterHtmlSlimParser::parseHtmlThroughExpat(const bool callProgressPopup) 
 void ChapterHtmlSlimParser::loadCssRules() {
   if (cssLoaded) return;
 
-  const uint32_t cssStartFree = ESP.getFreeHeap();
-  logChapterHeap("chapter-css-load-start", internalPath, filepath, cssStartFree);
-  Serial.printf("[%lu] [HEAP][CHP] chapter-css-usage tags=%u classes=%u ids=%u internal=%s\n", millis(),
-                static_cast<unsigned>(cssUsageFilter_.tags.size()),
-                static_cast<unsigned>(cssUsageFilter_.classes.size()), static_cast<unsigned>(cssUsageFilter_.ids.size()),
-                internalPath.c_str());
   sharedCssParser = epub.getParsedCssParser(&cssUsageFilter_);
   CssParser::UsageFilter emptyUsage;
   cssUsageFilter_.tags.swap(emptyUsage.tags);
   cssUsageFilter_.classes.swap(emptyUsage.classes);
   cssUsageFilter_.ids.swap(emptyUsage.ids);
-  logChapterHeap("chapter-css-usage-cleared", internalPath, filepath, cssStartFree);
   if (sharedCssParser) {
-    Serial.printf("[EHP] Using shared CSS dictionary (%zu rules)\n", sharedCssParser->getRuleCount());
-    logChapterHeap("chapter-css-shared", internalPath, filepath, cssStartFree, 0,
-                   static_cast<uint32_t>(sharedCssParser->getRuleCount()));
   } else {
     cssParser_.clear();
-    Serial.printf("[EHP] Shared CSS unavailable; using inline styles only\n");
-    logChapterHeap("chapter-css-inline-only", internalPath, filepath, cssStartFree);
   }
 
   cssLoaded = true;
-  logChapterHeap("chapter-css-load-end", internalPath, filepath, cssStartFree);
 }
 
 /**
@@ -908,9 +853,6 @@ void ChapterHtmlSlimParser::processImageElement(const char** atts) {
 
     if (imgWidth < 1) imgWidth = 1;
     if (imgHeight < 1) imgHeight = 1;
-
-    Serial.printf("[EHP] Image %s - CSS: %s, Final: %dx%d (actual: %dx%d, percent: w=%d h=%d)\n", src.c_str(),
-                  styleAttr.c_str(), imgWidth, imgHeight, actualW, actualH, widthIsPercentage, heightIsPercentage);
 
     // An image flows inline (as an atomic "word" on a text line) only when it is BOTH in a text context
     // (heading, or mid-paragraph with words already placed) AND small enough to be an ornament — roughly the
@@ -2624,14 +2566,6 @@ void ChapterHtmlSlimParser::addImageToPage(const std::string& bmpPath, int imgW,
  * @return true if parsing was successful, false otherwise
  */
 bool ChapterHtmlSlimParser::parseAndBuildPages(bool skipImageProcessing) {
-  const uint32_t buildStartFree = ESP.getFreeHeap();
-  logChapterHeap("build-start", internalPath, filepath, buildStartFree);
-  Serial.printf(
-      "[%lu] [SCT] parseAndBuildPages start internal=%s tmp=%s skipImages=%d viewport=%ux%u font=%d headerFont=%d "
-      "heap=%u\n",
-      millis(), internalPath.c_str(), filepath.c_str(), skipImageProcessing ? 1 : 0, viewportWidth, viewportHeight,
-      fontId, headerFontId, static_cast<unsigned>(ESP.getFreeHeap()));
-
   skipImages = skipImageProcessing;
   imageExtractCountForYield_ = 0;
   cssUsageFilter_ = CssParser::UsageFilter();
@@ -2639,16 +2573,12 @@ bool ChapterHtmlSlimParser::parseAndBuildPages(bool skipImageProcessing) {
   if (!skipImageProcessing) {
     imagePrefetchPassOnly_ = true;
     resetStructuralStateForParsePass();
-    const uint32_t prefetchStartFree = ESP.getFreeHeap();
-    logChapterHeap("image-prefetch-start", internalPath, filepath, prefetchStartFree);
     if (!parseHtmlThroughExpat(false)) {
       imagePrefetchPassOnly_ = false;
-      Serial.printf("[%lu] [SCT] parseAndBuildPages failed during image-prefetch internal=%s tmp=%s heap=%u\n",
-                    millis(), internalPath.c_str(), filepath.c_str(), static_cast<unsigned>(ESP.getFreeHeap()));
-      logChapterHeap("image-prefetch-failed", internalPath, filepath, prefetchStartFree);
+      Serial.printf("[%lu] [SCT] parseAndBuildPages failed during image-prefetch internal=%s tmp=%s\n", millis(),
+                    internalPath.c_str(), filepath.c_str());
       return false;
     }
-    logChapterHeap("image-prefetch-end", internalPath, filepath, prefetchStartFree);
     imagePrefetchPassOnly_ = false;
   }
 
@@ -2706,31 +2636,21 @@ bool ChapterHtmlSlimParser::parseAndBuildPages(bool skipImageProcessing) {
   smallCapsDepths.push_back(-1);
   startNewTextBlock(initialBlockStyle);
 
-  const uint32_t layoutStartFree = ESP.getFreeHeap();
-  logChapterHeap("layout-start", internalPath, filepath, layoutStartFree);
   if (!parseHtmlThroughExpat(true)) {
-    Serial.printf("[%lu] [SCT] parseAndBuildPages failed during layout internal=%s tmp=%s y=%d heap=%u\n", millis(),
-                  internalPath.c_str(), filepath.c_str(), currentPageNextY, static_cast<unsigned>(ESP.getFreeHeap()));
-    logChapterHeap("layout-failed", internalPath, filepath, layoutStartFree);
+    Serial.printf("[%lu] [SCT] parseAndBuildPages failed during layout internal=%s tmp=%s y=%d\n", millis(),
+                  internalPath.c_str(), filepath.c_str(), currentPageNextY);
     return false;
   }
-  logChapterHeap("layout-parse-end", internalPath, filepath, layoutStartFree);
 
   flushPartWordBuffer();
-  logChapterHeap("layout-after-flush", internalPath, filepath, layoutStartFree);
 
   if (currentTextBlock && !currentTextBlock->isEmpty()) {
     makePages();
-    logChapterHeap("layout-after-make-pages", internalPath, filepath, layoutStartFree);
   }
 
   if (currentPage && !currentPage->elements.empty()) {
     completeCurrentPage();
-    logChapterHeap("layout-after-final-page", internalPath, filepath, layoutStartFree);
   }
 
-  Serial.printf("[%lu] [SCT] parseAndBuildPages success internal=%s finalY=%d heap=%u\n", millis(),
-                internalPath.c_str(), currentPageNextY, static_cast<unsigned>(ESP.getFreeHeap()));
-  logChapterHeap("build-end", internalPath, filepath, buildStartFree);
   return true;
 }

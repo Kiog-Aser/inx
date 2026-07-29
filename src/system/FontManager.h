@@ -64,7 +64,6 @@ class FontManager {
   static bool isFontLoaded(int fontId);
   static int getFontId(const std::string& family, int size);
 
-  static void printMemoryUsage();
   static void printFontStats();
 
   static void setMaxLoadedFonts(int maxFonts);

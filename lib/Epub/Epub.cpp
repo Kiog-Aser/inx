@@ -12,7 +12,6 @@
 #include <PngToBmpConverter.h>
 #include <SDCardManager.h>
 #include <ZipFile.h>
-#include <esp_heap_caps.h>
 
 #include <algorithm>
 #include <cctype>
@@ -26,15 +25,6 @@
 #include "Epub/parsers/TocNcxParser.h"
 
 namespace {
-
-void logEpubHeap(const char* stage, const char* detail = "", const uint32_t startFree = 0) {
-  const uint32_t freeHeap = ESP.getFreeHeap();
-  const int32_t delta = startFree == 0 ? 0 : static_cast<int32_t>(freeHeap) - static_cast<int32_t>(startFree);
-  Serial.printf("[%lu] [HEAP][EBP] %s %sfree=%u largest=%u min=%u delta=%ld\n", millis(), stage,
-                detail && detail[0] ? detail : "", static_cast<unsigned>(freeHeap),
-                static_cast<unsigned>(ESP.getMaxAllocHeap()),
-                static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT)), static_cast<long>(delta));
-}
 
 bool spineHrefLooksLikeRenderableHtml(const std::string& href) {
   if (href.empty()) {
@@ -927,30 +917,22 @@ const CssParser* Epub::getParsedCssParser(const CssParser::UsageFilter* usageFil
   }
   parsedCssLoaded_ = true;
 
-  const uint32_t cssStartFree = ESP.getFreeHeap();
-  logEpubHeap(filtered ? "css-filtered-dictionary-start" : "css-dictionary-start", "", cssStartFree);
-
   if (!filtered && loadParsedCssCache()) {
-    logEpubHeap("css-cache-load-hit", "", cssStartFree);
     return parsedCssParser_.get();
   }
-  logEpubHeap(filtered ? "css-cache-bypassed-filtered" : "css-cache-load-miss", "", cssStartFree);
 
   constexpr uint32_t kMinFreeHeapForCss = 48 * 1024;
   if (ESP.getFreeHeap() < kMinFreeHeapForCss) {
     Serial.printf("[EBP] Low heap (%u bytes), skipping EPUB stylesheet CSS\n",
                   static_cast<unsigned>(ESP.getFreeHeap()));
-    logEpubHeap("css-skip-low-heap", "", cssStartFree);
     return nullptr;
   }
 
   parsedCssParser_.reset(new (std::nothrow) CssParser());
   if (!parsedCssParser_) {
     Serial.printf("[EBP] Failed to allocate parsed CSS dictionary\n");
-    logEpubHeap("css-parser-alloc-failed", "", cssStartFree);
     return nullptr;
   }
-  logEpubHeap("css-parser-allocated", "", cssStartFree);
 
   const int cssCount = getCssItemsCount();
   if (cssCount <= 0) {
@@ -975,39 +957,23 @@ const CssParser* Epub::getParsedCssParser(const CssParser::UsageFilter* usageFil
         continue;
       }
       totalCssSize += cssEntry.content.size();
-      char beforeDetail[128];
-      snprintf(beforeDetail, sizeof(beforeDetail), "file=%d path=%s bytes=%u ", i, cssEntry.path.c_str(),
-               static_cast<unsigned>(cssEntry.content.size()));
-      const uint32_t fileStartFree = ESP.getFreeHeap();
-      logEpubHeap("css-file-before", beforeDetail, cssStartFree);
       parsedCssParser_->parse(cssEntry.content, cssEntry.path, kCssReserveHeapBytes, usageFilter);
-      char afterDetail[128];
-      snprintf(afterDetail, sizeof(afterDetail), "file=%d rules=%u ", i,
-               static_cast<unsigned>(parsedCssParser_->getRuleCount()));
-      logEpubHeap("css-file-after", afterDetail, fileStartFree);
     } catch (const std::exception& e) {
       Serial.printf("[EBP] Shared CSS load aborted at file %d (%s); keeping %zu rules\n", i, e.what(),
                     parsedCssParser_->getRuleCount());
-      logEpubHeap("css-file-exception", "", cssStartFree);
       break;
     } catch (...) {
       Serial.printf("[EBP] Shared CSS load aborted at file %d; keeping %zu rules\n", i,
                     parsedCssParser_->getRuleCount());
-      logEpubHeap("css-file-unknown-exception", "", cssStartFree);
       break;
     }
   }
 
   Serial.printf("[EBP] %sCSS dictionary: %zu rules from %d bytes\n", filtered ? "Filtered " : "Shared ",
                 parsedCssParser_->getRuleCount(), static_cast<int>(totalCssSize));
-  logEpubHeap(filtered ? "css-filtered-dictionary-built" : "css-dictionary-built", "", cssStartFree);
   if (filtered) {
-    logEpubHeap("css-cache-save-skipped-filtered", "", cssStartFree);
   } else if (!saveParsedCssCache()) {
     Serial.printf("[EBP] Parsed CSS cache was not saved\n");
-    logEpubHeap("css-cache-save-failed", "", cssStartFree);
-  } else {
-    logEpubHeap("css-cache-saved", "", cssStartFree);
   }
   return parsedCssParser_.get();
 }

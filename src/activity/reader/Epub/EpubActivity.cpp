@@ -13,7 +13,6 @@
 #include <HalDisplay.h>
 #include <ImageRender.h>
 #include <SDCardManager.h>
-#include <esp_heap_caps.h>
 #include <esp_task_wdt.h>
 #include <time.h>
 
@@ -644,8 +643,6 @@ bool EpubActivity::slowPath() {
  */
 void EpubActivity::onEnter() {
   ActivityWithSubactivity::onEnter();
-  Serial.printf("[%lu] [MEM] Free heap at EpubActivity::onEnter() (book open, dictionary untouched): %u bytes\n",
-               millis(), static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)));
   epub->setupCacheDir();
 
   syncSettingsFromGlobalIfNeeded();

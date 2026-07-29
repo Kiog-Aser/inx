@@ -193,7 +193,6 @@ void FontManager::initialize(GfxRenderer& renderer) {
   renderer.insertFont(MONTSERRAT_CLOCK_70_FONT_ID, montserratClock70FontFamily);
 
   Serial.println("[FontManager] Initialized (Literata + Atkinson + Montserrat clock + SD streaming)");
-  printMemoryUsage();
 }
 
 /**
@@ -384,7 +383,6 @@ bool FontManager::scanSDFonts(const char* sdPath, bool forceRescan) {
   rebuildSdReaderFamilyList();
   Serial.printf("[FontManager] Scanned %d font families, found %d font sizes\n", (int)families.size(),
                 (int)g_sdFonts.size());
-  printMemoryUsage();
   return true;
 }
 
@@ -634,7 +632,6 @@ bool FontManager::unloadFont(int fontId) {
       g_loadedFontCount--;
 
       Serial.printf("[FontManager] Font ID %d unloaded successfully\n", fontId);
-      printMemoryUsage();
       return true;
     }
   }
@@ -687,7 +684,6 @@ void FontManager::unloadAllSDFonts() {
   g_loadedFontCount = 0;
 
   Serial.println("[FontManager] All SD fonts unloaded");
-  printMemoryUsage();
 }
 
 /**
@@ -872,20 +868,6 @@ void FontManager::printFontStats() {
     Serial.printf("  %s: %dpt %s\n", entry.family.c_str(), entry.size, entry.isLoaded ? "(loaded)" : "");
   }
   Serial.println("========================");
-}
-
-/**
- * @brief Prints memory usage statistics
- */
-void FontManager::printMemoryUsage() {
-  Serial.println("=== Memory Usage ===");
-  const uint32_t freeHeap = ESP.getFreeHeap();
-  Serial.printf("Free heap: %u bytes (%u KB)\n", freeHeap, freeHeap / 1024);
-  Serial.printf("Largest free block: %u bytes\n", ESP.getMaxAllocHeap());
-  Serial.printf("Font families loaded: %d\n", (int)g_fontFamilyStorage.size());
-  Serial.printf("Fonts loaded: %d\n", (int)g_fontStorage.size());
-  Serial.printf("SD font entries: %d\n", (int)g_sdFonts.size());
-  Serial.println("===================");
 }
 
 /**
