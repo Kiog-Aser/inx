@@ -142,6 +142,8 @@ class ChapterHtmlSlimParser {
     int marginBottom = 0;
     uint8_t borderBottomStyle = 0;
     uint8_t borderLeftStyle = 0;
+    int horizontalChrome = 0;
+    bool shrinkToContent = false;
     bool finalized = false;
   };
   std::vector<CssHorizontalInsetScope> cssHorizontalInsetStack;
@@ -162,6 +164,8 @@ class ChapterHtmlSlimParser {
   uint8_t currentBlockBorderLeftStyle = 0;
   uint8_t currentBlockBorderRightStyle = 0;
   bool currentBlockUsesBorderBox = false;
+  bool currentBlockShrinkBorderBoxToContent = false;
+  int currentBlockHorizontalChromePx = 0;
   int16_t currentBlockBorderBoxX = 0;
   int16_t currentBlockBorderBoxY = 0;
   int16_t currentBlockBorderBoxW = 0;

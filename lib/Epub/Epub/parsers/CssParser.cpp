@@ -27,7 +27,7 @@ namespace {
 // is the heap-reserve guard in parse(); this just caps worst-case memory if heap is plentiful.
 constexpr size_t kMaxCssRules = 2048;
 constexpr uint32_t kCssParserCacheMagic = 0x43535042;  // "CSPB"
-constexpr uint16_t kCssParserCacheVersion = 2;
+constexpr uint16_t kCssParserCacheVersion = 3;
 constexpr uint8_t kCssPropertyInvalid = 0xFF;
 
 #ifdef ARDUINO
@@ -44,14 +44,14 @@ void logHeap(const char* stage, const std::string& sourcePath, const size_t byte
 
 uint8_t cssPropertyId(const std::string& name) {
   static const char* const kNames[] = {
-      "background",      "background-image", "border",       "border-bottom", "border-left",
-      "border-right",    "border-style",     "border-top",   "border-width",  "display",
-      "font-size",       "font-style",       "font-variant", "font-variant-caps",
-      "font-weight",     "height",           "initial-letter", "line-height", "margin",
-      "margin-bottom",   "margin-left",      "margin-right", "margin-top",    "max-height",
-      "max-width",       "min-height",       "min-width",    "padding",       "padding-bottom",
-      "padding-left",    "padding-right",    "padding-top",  "text-align",    "text-indent",
-      "vertical-align",  "width",            "float",
+      "background",       "background-color", "background-image", "border",       "border-bottom",
+      "border-color",     "border-left",      "border-radius",    "border-right", "border-style",
+      "border-top",       "border-width",     "display",          "font-size",    "font-style",
+      "font-variant",     "font-variant-caps", "font-weight",      "height",       "initial-letter",
+      "line-height",      "margin",           "margin-bottom",    "margin-left",  "margin-right",
+      "margin-top",       "max-height",       "max-width",        "min-height",   "min-width",
+      "padding",          "padding-bottom",   "padding-left",     "padding-right", "padding-top",
+      "text-align",       "text-indent",      "vertical-align",   "width",        "float",
   };
   for (uint8_t i = 0; i < sizeof(kNames) / sizeof(kNames[0]); ++i) {
     if (name == kNames[i]) {
@@ -63,14 +63,14 @@ uint8_t cssPropertyId(const std::string& name) {
 
 const char* cssPropertyName(const uint8_t id) {
   static const char* const kNames[] = {
-      "background",      "background-image", "border",       "border-bottom", "border-left",
-      "border-right",    "border-style",     "border-top",   "border-width",  "display",
-      "font-size",       "font-style",       "font-variant", "font-variant-caps",
-      "font-weight",     "height",           "initial-letter", "line-height", "margin",
-      "margin-bottom",   "margin-left",      "margin-right", "margin-top",    "max-height",
-      "max-width",       "min-height",       "min-width",    "padding",       "padding-bottom",
-      "padding-left",    "padding-right",    "padding-top",  "text-align",    "text-indent",
-      "vertical-align",  "width",            "float",
+      "background",       "background-color", "background-image", "border",       "border-bottom",
+      "border-color",     "border-left",      "border-radius",    "border-right", "border-style",
+      "border-top",       "border-width",     "display",          "font-size",    "font-style",
+      "font-variant",     "font-variant-caps", "font-weight",      "height",       "initial-letter",
+      "line-height",      "margin",           "margin-bottom",    "margin-left",  "margin-right",
+      "margin-top",       "max-height",       "max-width",        "min-height",   "min-width",
+      "padding",          "padding-bottom",   "padding-left",     "padding-right", "padding-top",
+      "text-align",       "text-indent",      "vertical-align",   "width",        "float",
   };
   return id < sizeof(kNames) / sizeof(kNames[0]) ? kNames[id] : "";
 }
@@ -486,6 +486,83 @@ std::string extractCssUrl(const std::string& raw) {
     return {};
   }
   return url;
+}
+
+bool parseCssColorLuma(std::string raw, int* outLuma) {
+  if (!outLuma) return false;
+  raw = trimCssWs(raw);
+  std::transform(raw.begin(), raw.end(), raw.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (raw.empty() || raw == "transparent" || raw == "none") {
+    return false;
+  }
+  auto lumaFromRgb = [&](const int r, const int g, const int b) {
+    *outLuma = (r * 77 + g * 150 + b * 29) >> 8;
+    return true;
+  };
+  if (raw[0] == '#') {
+    const std::string hex = raw.substr(1);
+    auto hexVal = [](const char c) -> int {
+      if (c >= '0' && c <= '9') return c - '0';
+      if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+      return -1;
+    };
+    if (hex.size() == 3 || hex.size() == 4) {
+      const int r = hexVal(hex[0]);
+      const int g = hexVal(hex[1]);
+      const int b = hexVal(hex[2]);
+      if (r >= 0 && g >= 0 && b >= 0) return lumaFromRgb(r * 17, g * 17, b * 17);
+    } else if (hex.size() == 6 || hex.size() == 8) {
+      const int r1 = hexVal(hex[0]), r2 = hexVal(hex[1]);
+      const int g1 = hexVal(hex[2]), g2 = hexVal(hex[3]);
+      const int b1 = hexVal(hex[4]), b2 = hexVal(hex[5]);
+      if (r1 >= 0 && r2 >= 0 && g1 >= 0 && g2 >= 0 && b1 >= 0 && b2 >= 0) {
+        return lumaFromRgb((r1 << 4) | r2, (g1 << 4) | g2, (b1 << 4) | b2);
+      }
+    }
+    return false;
+  }
+  const size_t open = raw.find('(');
+  const size_t close = raw.find(')', open == std::string::npos ? 0 : open + 1);
+  if (raw.rfind("rgb", 0) == 0 && open != std::string::npos && close != std::string::npos) {
+    std::string body = raw.substr(open + 1, close - open - 1);
+    std::replace(body.begin(), body.end(), ',', ' ');
+    const auto tokens = splitCssWhitespaceList(body);
+    if (tokens.size() >= 3) {
+      auto channel = [](std::string tok) -> int {
+        tok = trimCssWs(tok);
+        const bool pct = !tok.empty() && tok.back() == '%';
+        const float value = std::strtof(tok.c_str(), nullptr);
+        return pct ? static_cast<int>((std::max(0.0f, std::min(100.0f, value)) * 255.0f) / 100.0f + 0.5f)
+                   : static_cast<int>(std::max(0.0f, std::min(255.0f, value)));
+      };
+      return lumaFromRgb(channel(tokens[0]), channel(tokens[1]), channel(tokens[2]));
+    }
+  }
+  if (raw == "gray" || raw == "grey" || raw == "silver" || raw == "darkgray" || raw == "darkgrey" ||
+      raw == "lightgray" || raw == "lightgrey") {
+    *outLuma = raw.find("dark") != std::string::npos ? 96 : (raw.find("light") != std::string::npos ? 211 : 160);
+    return true;
+  }
+  if (raw == "black") {
+    *outLuma = 0;
+    return true;
+  }
+  if (raw == "white") {
+    *outLuma = 255;
+    return true;
+  }
+  return false;
+}
+
+uint8_t toneFromCssColor(const std::string& raw, const uint8_t fallbackTone) {
+  int luma = 0;
+  if (!parseCssColorLuma(raw, &luma)) {
+    return fallbackTone;
+  }
+  if (luma < 88) return 1;
+  if (luma > 232) return 0;
+  return 2;
 }
 
 }  // namespace
@@ -1283,6 +1360,61 @@ std::string CssParser::getBorderStyleKeyword(const std::string& edge, const std:
   return "solid";
 }
 
+int CssParser::getBorderRadiusPx(const std::string& elementTagLower, const std::string& className,
+                                 const std::string& id, const std::string& styleAttr, const int viewportWidth,
+                                 const int viewportHeight) const {
+  std::map<std::string, std::string> inlineMap;
+  parseInlineStyle(styleAttr, inlineMap);
+  std::string raw;
+  const auto inlineIt = inlineMap.find("border-radius");
+  if (inlineIt != inlineMap.end()) {
+    raw = inlineIt->second;
+  } else {
+    raw = getCascadedPropertyValue("border-radius", className, id, styleAttr, elementTagLower);
+  }
+  const auto tokens = splitCssWhitespaceList(trimCssWs(raw));
+  if (tokens.empty()) {
+    return 0;
+  }
+  return std::max(0, parseCssLength(tokens[0], viewportWidth, viewportHeight, true));
+}
+
+uint8_t CssParser::getBorderTone(const std::string& elementTagLower, const std::string& className,
+                                 const std::string& id, const std::string& styleAttr) const {
+  std::map<std::string, std::string> inlineMap;
+  parseInlineStyle(styleAttr, inlineMap);
+  for (const char* prop : {"border-color", "border"}) {
+    const auto inlineIt = inlineMap.find(prop);
+    if (inlineIt != inlineMap.end()) {
+      const uint8_t tone = toneFromCssColor(inlineIt->second, 1);
+      if (tone != 1 || prop == std::string("border-color")) return tone;
+    }
+    const std::string sheet = getCascadedPropertyValue(prop, className, id, styleAttr, elementTagLower);
+    if (!sheet.empty()) {
+      const uint8_t tone = toneFromCssColor(sheet, 1);
+      if (tone != 1 || prop == std::string("border-color")) return tone;
+    }
+  }
+  return 1;
+}
+
+uint8_t CssParser::getBackgroundTone(const std::string& elementTagLower, const std::string& className,
+                                     const std::string& id, const std::string& styleAttr) const {
+  std::map<std::string, std::string> inlineMap;
+  parseInlineStyle(styleAttr, inlineMap);
+  for (const char* prop : {"background-color", "background"}) {
+    const auto inlineIt = inlineMap.find(prop);
+    if (inlineIt != inlineMap.end()) {
+      return toneFromCssColor(inlineIt->second, 0);
+    }
+    const std::string sheet = getCascadedPropertyValue(prop, className, id, styleAttr, elementTagLower);
+    if (!sheet.empty()) {
+      return toneFromCssColor(sheet, 0);
+    }
+  }
+  return 0;
+}
+
 float CssParser::getFontSizeEm(const std::string& elementTagLower, const std::string& className, const std::string& id,
                                const std::string& styleAttr) const {
   std::map<std::string, std::string> inlineMap;
@@ -1633,6 +1765,25 @@ bool CssParser::isDisplayBlock(const std::string& elementTagLower, const std::st
   std::transform(raw.begin(), raw.end(), raw.begin(),
                  [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
   return raw == "block";
+}
+
+bool CssParser::isDisplayInlineBlock(const std::string& elementTagLower, const std::string& className,
+                                     const std::string& id, const std::string& styleAttr) const {
+  std::map<std::string, std::string> inlineMap;
+  parseInlineStyle(styleAttr, inlineMap);
+
+  std::string raw;
+  const auto inlineDisplayIt = inlineMap.find("display");
+  if (inlineDisplayIt != inlineMap.end()) {
+    raw = inlineDisplayIt->second;
+  } else {
+    raw = getCascadedPropertyValue("display", className, id, styleAttr, elementTagLower);
+  }
+
+  raw = trimCssWs(raw);
+  std::transform(raw.begin(), raw.end(), raw.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return raw == "inline-block";
 }
 
 bool CssParser::isDisplayNone(const std::string& elementTagLower, const std::string& className, const std::string& id,

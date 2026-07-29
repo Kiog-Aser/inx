@@ -82,6 +82,8 @@ class CssParser {
                              const std::string& styleAttr) const;
   bool isDisplayBlock(const std::string& elementTagLower, const std::string& className, const std::string& id,
                       const std::string& styleAttr) const;
+  bool isDisplayInlineBlock(const std::string& elementTagLower, const std::string& className, const std::string& id,
+                            const std::string& styleAttr) const;
   bool isDisplayNone(const std::string& elementTagLower, const std::string& className, const std::string& id,
                      const std::string& styleAttr) const;
   bool isFloatLeft(const std::string& elementTagLower, const std::string& className, const std::string& id,
@@ -145,6 +147,12 @@ class CssParser {
    */
   std::string getBorderStyleKeyword(const std::string& edge, const std::string& className, const std::string& id,
                                     const std::string& styleAttr, const std::string& elementTagLower = "") const;
+  int getBorderRadiusPx(const std::string& elementTagLower, const std::string& className, const std::string& id,
+                        const std::string& styleAttr, int viewportWidth, int viewportHeight) const;
+  uint8_t getBorderTone(const std::string& elementTagLower, const std::string& className, const std::string& id,
+                        const std::string& styleAttr) const;
+  uint8_t getBackgroundTone(const std::string& elementTagLower, const std::string& className, const std::string& id,
+                            const std::string& styleAttr) const;
   /** CSS font-size as an em multiplier (1.0 = default). Handles em/rem/%/px/pt and size keywords; 1.0 if unset. */
   float getFontSizeEm(const std::string& elementTagLower, const std::string& className, const std::string& id,
                       const std::string& styleAttr) const;

@@ -303,6 +303,9 @@ class PageCssBorderBox final : public PageElement {
   uint8_t styleRight;
   uint8_t styleBottom;
   uint8_t styleLeft;
+  int16_t radius;
+  uint8_t borderTone;
+  uint8_t backgroundTone;
 
  public:
   PageCssBorderBox(const int16_t xPos, const int16_t yPos, const int16_t width, const int16_t height,
@@ -310,7 +313,8 @@ class PageCssBorderBox final : public PageElement {
                    const int16_t borderLeft, const uint8_t styleTop = PageCssBorderLine::SOLID,
                    const uint8_t styleRight = PageCssBorderLine::SOLID,
                    const uint8_t styleBottom = PageCssBorderLine::SOLID,
-                   const uint8_t styleLeft = PageCssBorderLine::SOLID)
+                   const uint8_t styleLeft = PageCssBorderLine::SOLID, const int16_t radius = 0,
+                   const uint8_t borderTone = 1, const uint8_t backgroundTone = 0)
       : PageElement(xPos, yPos),
         width(width),
         height(height),
@@ -321,7 +325,10 @@ class PageCssBorderBox final : public PageElement {
         styleTop(styleTop),
         styleRight(styleRight),
         styleBottom(styleBottom),
-        styleLeft(styleLeft) {}
+        styleLeft(styleLeft),
+        radius(radius),
+        borderTone(borderTone),
+        backgroundTone(backgroundTone) {}
 
   PageElementTag getTag() const override { return TAG_PageCssBorderBox; }
   void setGeometry(const int16_t x, const int16_t y, const int16_t w, const int16_t h) {

@@ -177,6 +177,32 @@ int TextRender::getGlyphTopInset(const int fontId, const uint32_t cp, const EpdF
   return data->ascender - glyph->top;
 }
 
+int TextRender::getGlyphBottomInset(const int fontId, const uint32_t cp, const EpdFontFamily::Style style) const {
+  if (findFontFamily(gfx, fontId) == nullptr) {
+    return 0;
+  }
+  const auto& family = (*findFontFamily(gfx, fontId));
+  const EpdFontData* data = family.getData(style);
+  if (!data) {
+    return 0;
+  }
+  EpdGlyph storage;
+  const EpdGlyph* glyph = nullptr;
+  ExternalFont* streamIt = findStreamingFont(gfx, data);
+  if (streamIt) {
+    if (streamIt->getGlyphMetadata(cp, storage)) {
+      glyph = &storage;
+    }
+  } else {
+    glyph = family.getGlyph(cp, style);
+  }
+  if (!glyph) {
+    return 0;
+  }
+  const int glyphBottom = data->ascender - glyph->top + glyph->height;
+  return std::max(0, static_cast<int>(data->advanceY) - glyphBottom);
+}
+
 int TextRender::getLineHeight(const int fontId) const {
   if (findFontFamily(gfx, fontId) == nullptr) {
     Serial.printf("[%lu] [GFX] Font %d not found\n", millis(), fontId);
