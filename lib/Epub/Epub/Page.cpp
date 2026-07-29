@@ -171,7 +171,7 @@ void drawVerticalBorder(GfxRenderer& renderer, const int left, const int top, co
  * @param yOffset Vertical offset for page margins
  */
 void PageLine::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset, ImageRenderMode) {
-  block->render(renderer, fontId, xPos + xOffset, yPos + yOffset);
+  block.render(renderer, fontId, xPos + xOffset, yPos + yOffset);
 }
 /**
  * Serializes a PageLine to a file.
@@ -182,7 +182,7 @@ void PageLine::render(GfxRenderer& renderer, const int fontId, const int xOffset
 bool PageLine::serialize(FsFile& file) {
   serialization::writePod(file, xPos);
   serialization::writePod(file, yPos);
-  return block->serialize(file);
+  return block.serialize(file);
 }
 
 /**
@@ -196,7 +196,8 @@ std::unique_ptr<PageLine> PageLine::deserialize(FsFile& file) {
   serialization::readPod(file, x);
   serialization::readPod(file, y);
   auto tb = TextBlock::deserialize(file);
-  return std::unique_ptr<PageLine>(new PageLine(std::move(tb), x, y));
+  if (!tb) return nullptr;
+  return std::unique_ptr<PageLine>(new PageLine(std::move(*tb), x, y));
 }
 
 /**
@@ -204,14 +205,14 @@ std::unique_ptr<PageLine> PageLine::deserialize(FsFile& file) {
  */
 void PageSmallCaps::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset,
                            ImageRenderMode) {
-  block->render(renderer, fontId, xPos + xOffset, yPos + yOffset);
+  block.render(renderer, fontId, xPos + xOffset, yPos + yOffset);
 }
 
 bool PageSmallCaps::serialize(FsFile& file) {
   serialization::writePod(file, xPos);
   serialization::writePod(file, yPos);
   serialization::writePod(file, compatFontId);
-  return block->serialize(file);
+  return block.serialize(file);
 }
 
 std::unique_ptr<PageSmallCaps> PageSmallCaps::deserialize(FsFile& file) {
@@ -221,7 +222,8 @@ std::unique_ptr<PageSmallCaps> PageSmallCaps::deserialize(FsFile& file) {
   serialization::readPod(file, y);
   serialization::readPod(file, scId);
   auto tb = TextBlock::deserialize(file);
-  return std::unique_ptr<PageSmallCaps>(new PageSmallCaps(std::move(tb), x, y, scId));
+  if (!tb) return nullptr;
+  return std::unique_ptr<PageSmallCaps>(new PageSmallCaps(std::move(*tb), x, y, scId));
 }
 
 /**
@@ -235,7 +237,7 @@ std::unique_ptr<PageSmallCaps> PageSmallCaps::deserialize(FsFile& file) {
  */
 void PageHeader::render(GfxRenderer& renderer, const int fontId, const int xOffset, const int yOffset,
                         ImageRenderMode) {
-  block->render(renderer, headerFontId, xPos + xOffset, yPos + yOffset);
+  block.render(renderer, headerFontId, xPos + xOffset, yPos + yOffset);
 }
 
 /**
@@ -248,7 +250,7 @@ bool PageHeader::serialize(FsFile& file) {
   serialization::writePod(file, xPos);
   serialization::writePod(file, yPos);
   serialization::writePod(file, headerFontId);
-  return block->serialize(file);
+  return block.serialize(file);
 }
 
 /**
@@ -267,7 +269,8 @@ std::unique_ptr<PageHeader> PageHeader::deserialize(FsFile& file) {
     serialization::readPod(file, headerId);
   }
   auto textBlock = TextBlock::deserialize(file);
-  return std::unique_ptr<PageHeader>(new PageHeader(std::move(textBlock), x, y, headerId));
+  if (!textBlock) return nullptr;
+  return std::unique_ptr<PageHeader>(new PageHeader(std::move(*textBlock), x, y, headerId));
 }
 
 /**
@@ -782,13 +785,13 @@ std::unique_ptr<PageCssBorderBox> PageCssBorderBox::deserialize(FsFile& file) {
 }
 
 bool Page::anyImageNeedsGrayscale() const {
-  return std::any_of(elements.begin(), elements.end(), [](const std::shared_ptr<PageElement>& element) {
+  return std::any_of(elements.begin(), elements.end(), [](const std::unique_ptr<PageElement>& element) {
     return element->getTag() == TAG_PageImage && needsGrayscalePass(static_cast<const PageImage&>(*element));
   });
 }
 
 bool Page::anyPngImage() const {
-  return std::any_of(elements.begin(), elements.end(), [](const std::shared_ptr<PageElement>& element) {
+  return std::any_of(elements.begin(), elements.end(), [](const std::unique_ptr<PageElement>& element) {
     if (element->getTag() != TAG_PageImage) {
       return false;
     }
@@ -976,7 +979,7 @@ std::string Page::extractPlainText(const size_t maxChars) const {
     if (block == nullptr) {
       continue;
     }
-    block->forEachWord([&](size_t, const std::string& word, uint16_t, EpdFontFamily::Style) { appendText(word); });
+    block->forEachWord([&](size_t, const std::string& word, int16_t, EpdFontFamily::Style) { appendText(word); });
   }
   return out;
 }

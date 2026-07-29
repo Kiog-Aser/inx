@@ -25,8 +25,11 @@ class ParsedText {
   std::list<uint8_t> wordSmallCaps;
   std::list<uint8_t> wordUnderline;
   std::list<uint8_t> wordVerticalAlign;
+  std::list<int16_t> wordXOffset;
+  bool hasWordXOffsets_ = false;
   /** True when this token was split only by an inline style boundary and should not get an inter-word gap. */
   std::list<uint8_t> wordJoinPrevious;
+  bool hasJoinedWords_ = false;
   // Inline images flow as atomic "words": for an image slot the `words` entry is empty and these hold the
   // cached path + on-line display size. These lists stay EMPTY (zero overhead) until the block actually
   // contains an inline image — see hasInlineImages_ — so plain text blocks pay nothing.
@@ -59,7 +62,7 @@ class ParsedText {
                             std::vector<uint16_t>& wordWidths, bool allowFallbackBreaks);
   void extractLine(size_t breakIndex, int pageWidth, int spaceWidth, const std::vector<uint16_t>& wordWidths,
                    const std::vector<size_t>& lineBreakIndices, const std::vector<uint8_t>& joinPreviousSnapshot,
-                   const std::function<void(std::shared_ptr<TextBlock>)>& processLine);
+                   const std::function<void(TextBlock&&)>& processLine);
   std::vector<uint16_t> calculateWordWidths(const GfxRenderer& renderer, int fontId);
 
  public:
@@ -75,7 +78,7 @@ class ParsedText {
   ~ParsedText() = default;
 
   void addWord(std::string word, EpdFontFamily::Style fontStyle, bool smallCaps = false, bool underline = false,
-               bool joinPrevious = false, uint8_t verticalAlign = TextBlock::BASELINE);
+               bool joinPrevious = false, uint8_t verticalAlign = TextBlock::BASELINE, int16_t xOffset = 0);
   /** Appends an inline image that flows on the line as an atomic word of the given on-screen size. */
   void addImage(std::string cachePath, uint16_t displayW, uint16_t displayH);
   void setStyle(const TextBlock::Style style) { this->style = style; }
@@ -101,6 +104,6 @@ class ParsedText {
   size_t size() const { return words.size(); }
   bool isEmpty() const { return words.empty(); }
   void layoutAndExtractLines(const GfxRenderer& renderer, int fontId, uint16_t viewportWidth,
-                             const std::function<void(std::shared_ptr<TextBlock>)>& processLine,
+                             const std::function<void(TextBlock&&)>& processLine,
                              bool includeLastLine = true);
 };

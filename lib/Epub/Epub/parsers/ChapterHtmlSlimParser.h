@@ -98,12 +98,14 @@ class ChapterHtmlSlimParser {
 
   CssParser cssParser_;
   const CssParser* sharedCssParser = nullptr;
+  CssParser::UsageFilter cssUsageFilter_;
   bool cssLoaded;
   std::vector<TextBlock::Style> cssAlignmentStack;
   // Element depth that pushed each cssAlignmentStack entry, so endElement only pops the level it pushed.
   // Tags that early-return in startElement (img, hr, table cells, skipped tags) never push; without this an
   // unconditional pop would drop an ancestor's alignment and break inheritance for later siblings.
   std::vector<int> cssAlignmentDepths;
+  std::vector<int> cssDisplayBlockDepths;
   struct CssFontStyleScope {
     int depth = 0;
     bool bold = false;
@@ -112,6 +114,12 @@ class ChapterHtmlSlimParser {
   std::vector<CssFontStyleScope> cssFontStyleStack;
   std::vector<bool> smallCapsStack;
   std::vector<int> smallCapsDepths;
+  struct InlineXOffsetScope {
+    int depth = 0;
+    int offset = 0;
+  };
+  std::vector<InlineXOffsetScope> inlineXOffsetStack;
+  int currentInlineXOffsetPx = 0;
   struct CssHorizontalInsetScope {
     int depth = 0;
     int left = 0;
@@ -120,14 +128,20 @@ class ChapterHtmlSlimParser {
   };
   struct CssBorderBoxScope {
     int depth = 0;
-    std::shared_ptr<PageCssBorderBox> elem;
+    PageCssBorderBox* elem = nullptr;
     int16_t x = 0;
     int16_t y = 0;
     int16_t width = 0;
+    int borderTop = 0;
+    int borderRight = 0;
     int paddingBottom = 0;
     int borderBottom = 0;
+    int borderLeft = 0;
+    uint8_t borderTopStyle = 0;
+    uint8_t borderRightStyle = 0;
     int marginBottom = 0;
     uint8_t borderBottomStyle = 0;
+    uint8_t borderLeftStyle = 0;
     bool finalized = false;
   };
   std::vector<CssHorizontalInsetScope> cssHorizontalInsetStack;
@@ -159,9 +173,9 @@ class ChapterHtmlSlimParser {
   /** Y where the current block's content started (after top margin/border/padding), for min-height. */
   int16_t currentBlockContentStartY = 0;
   /** Top border rule of the current block, deferred so its width can be set to the text width after layout. */
-  std::shared_ptr<PageCssBorderLine> pendingTopBorderElem_;
+  PageCssBorderLine* pendingTopBorderElem_ = nullptr;
   /** Full CSS border box for blocks that have left/right borders; height is finalized after text layout. */
-  std::shared_ptr<PageCssBorderBox> pendingBorderBoxElem_;
+  PageCssBorderBox* pendingBorderBoxElem_ = nullptr;
 
   /** When true, Expat callbacks only walk the tree for depth/skip and prefetch images (no text layout). */
   bool imagePrefetchPassOnly_ = false;
@@ -223,15 +237,18 @@ class ChapterHtmlSlimParser {
   /**
    * Adds a single text line to the current page.
    */
-  void addLineToPage(std::shared_ptr<TextBlock> line);
+  void addLineToPage(TextBlock&& line);
+  void completeCurrentPage();
+  void finalizeOpenBorderBoxesForPageBreak();
+  void restartOpenBorderBoxesAfterPageBreak();
   void addCenteredDivider(const char* text);
   void addHorizontalRule(const std::string& tagLower = "hr", const std::string& classAttr = "",
                          const std::string& idAttr = "", const std::string& styleAttr = "");
   /** Emits a horizontal border rule (full content width placeholder) and returns it so its width can be
    *  narrowed to the text content width once the block is laid out. */
-  std::shared_ptr<PageCssBorderLine> addCssBorderLine(int thicknessPx, uint8_t style = 0);
+  PageCssBorderLine* addCssBorderLine(int thicknessPx, uint8_t style = 0);
   /** Narrows a border rule to the block's text content width + 2%, centered or left-aligned to the text. */
-  void finalizeBorderWidth(const std::shared_ptr<PageCssBorderLine>& elem, int contentWidth, bool center) const;
+  void finalizeBorderWidth(PageCssBorderLine* elem, int contentWidth, bool center) const;
   /** Default breathing room between a CSS border rule and the block's text when no padding is specified. */
   int cssBorderInnerGapPx() const;
   /** Removes the first line's glyph top leading after a padded top border so the visible gap equals the CSS

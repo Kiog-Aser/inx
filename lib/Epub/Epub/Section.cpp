@@ -9,6 +9,7 @@
 #include <FsHelpers.h>
 #include <SDCardManager.h>
 #include <Serialization.h>
+#include <esp_heap_caps.h>
 
 #include <exception>
 #include <new>
@@ -18,11 +19,21 @@
 #include "parsers/ChapterHtmlSlimParser.h"
 
 namespace {
-constexpr uint8_t SECTION_FILE_VERSION = 62;  // 62: honor explicit block text-align outside Follow CSS mode
+constexpr uint8_t SECTION_FILE_VERSION = 67;  // 67: flush child paragraph text before closing parent border boxes
 constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(float) + sizeof(bool) +
                                  sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) +
                                  sizeof(bool) + sizeof(uint16_t) + sizeof(uint32_t);
 constexpr uint16_t MAX_CACHED_PAGE_OFFSETS = 2048;
+
+void logSectionHeap(const char* stage, const int spineIndex, const char* href, const uint32_t startFree = 0,
+                    const uint32_t pages = 0) {
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  const int32_t delta = startFree == 0 ? 0 : static_cast<int32_t>(freeHeap) - static_cast<int32_t>(startFree);
+  Serial.printf("[%lu] [HEAP][SCT] %s spine=%d href=%s pages=%lu free=%u largest=%u min=%u delta=%ld\n", millis(),
+                stage, spineIndex, href ? href : "", static_cast<unsigned long>(pages), static_cast<unsigned>(freeHeap),
+                static_cast<unsigned>(ESP.getMaxAllocHeap()),
+                static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT)), static_cast<long>(delta));
+}
 }  // namespace
 
 Section::~Section() {
@@ -336,6 +347,8 @@ bool Section::createSectionFile(const int fontId, const int headerFontId, const 
                                 const bool warmImageQuality, const int warmImageYOffset) {
   const auto localPath = epub->getSpineItem(spineIndex).href;
   const auto tmpHtmlPath = epub->getCachePath() + "/.tmp_" + std::to_string(spineIndex) + ".html";
+  const uint32_t sectionStartFree = ESP.getFreeHeap();
+  logSectionHeap("create-start", spineIndex, localPath.c_str(), sectionStartFree);
 
   std::string contentBasePath = "";
   size_t lastSlash = localPath.find_last_of('/');
@@ -347,6 +360,8 @@ bool Section::createSectionFile(const int fontId, const int headerFontId, const 
 
   bool success = false;
   for (int attempt = 0; attempt < 3 && !success; attempt++) {
+    const uint32_t extractStartFree = ESP.getFreeHeap();
+    logSectionHeap("temp-extract-attempt-start", spineIndex, localPath.c_str(), extractStartFree);
     if (attempt > 0) {
       delay(50);
     }
@@ -371,6 +386,8 @@ bool Section::createSectionFile(const int fontId, const int headerFontId, const 
         millis(), attempt + 1, success ? 1 : 0, static_cast<unsigned long>(tmpSize), spineIndex, localPath.c_str(),
         tmpHtmlPath.c_str(), epub->getPath().c_str(), epub->getTitle().c_str(),
         static_cast<unsigned>(ESP.getFreeHeap()));
+    logSectionHeap(success ? "temp-extract-attempt-ok" : "temp-extract-attempt-failed", spineIndex, localPath.c_str(),
+                   extractStartFree);
     if (!success && SdMan.exists(tmpHtmlPath.c_str())) {
       SdMan.remove(tmpHtmlPath.c_str());
     }
@@ -381,6 +398,7 @@ bool Section::createSectionFile(const int fontId, const int headerFontId, const 
         "title=%s heap=%u\n",
         millis(), spineIndex, localPath.c_str(), epub->getPath().c_str(), epub->getTitle().c_str(),
         static_cast<unsigned>(ESP.getFreeHeap()));
+    logSectionHeap("create-extract-failed", spineIndex, localPath.c_str(), sectionStartFree);
     return false;
   }
 
@@ -405,7 +423,9 @@ bool Section::createSectionFile(const int fontId, const int headerFontId, const 
                          viewportHeight, hyphenationEnabled, respectCssParagraphIndent, bionicReadingEnabled);
 
   try {
+    logSectionHeap("parse-before", spineIndex, localPath.c_str(), sectionStartFree);
     success = visitor.parseAndBuildPages(skipImages);
+    logSectionHeap("parse-after", spineIndex, localPath.c_str(), sectionStartFree, pageCount);
   } catch (const std::bad_alloc& e) {
     Serial.printf("[%lu] [SCT] createSectionFile: OOM while parsing spine=%d href=%s (%s)\n", millis(), spineIndex,
                   localPath.c_str(), e.what());
@@ -420,8 +440,11 @@ bool Section::createSectionFile(const int fontId, const int headerFontId, const 
     success = false;
   }
 
+  logSectionHeap("css-release-before", spineIndex, localPath.c_str(), sectionStartFree, pageCount);
   epub->releaseParsedCssParser();
+  logSectionHeap("css-release-after", spineIndex, localPath.c_str(), sectionStartFree, pageCount);
   SdMan.remove(tmpHtmlPath.c_str());
+  logSectionHeap("tmp-removed", spineIndex, localPath.c_str(), sectionStartFree, pageCount);
 
   if (!success) {
     Serial.printf(
@@ -431,6 +454,7 @@ bool Section::createSectionFile(const int fontId, const int headerFontId, const 
         static_cast<unsigned>(pageCount), static_cast<unsigned>(ESP.getFreeHeap()));
     file.close();
     SdMan.remove(filePath.c_str());
+    logSectionHeap("create-failed-cleanup", spineIndex, localPath.c_str(), sectionStartFree, pageCount);
     return false;
   }
 
@@ -439,6 +463,7 @@ bool Section::createSectionFile(const int fontId, const int headerFontId, const 
                   spineIndex, localPath.c_str(), epub->getPath().c_str(), epub->getTitle().c_str());
     file.close();
     SdMan.remove(filePath.c_str());
+    logSectionHeap("create-zero-page-cleanup", spineIndex, localPath.c_str(), sectionStartFree, pageCount);
     return false;
   }
 
@@ -448,6 +473,7 @@ bool Section::createSectionFile(const int fontId, const int headerFontId, const 
                     millis(), spineIndex);
       file.close();
       SdMan.remove(filePath.c_str());
+      logSectionHeap("create-invalid-lut-cleanup", spineIndex, localPath.c_str(), sectionStartFree, pageCount);
       return false;
     }
   }
@@ -461,6 +487,7 @@ bool Section::createSectionFile(const int fontId, const int headerFontId, const 
   serialization::writePod(file, pageCount);
   serialization::writePod(file, lutOffset);
   file.close();
+  logSectionHeap("create-success", spineIndex, localPath.c_str(), sectionStartFree, pageCount);
   return true;
 }
 

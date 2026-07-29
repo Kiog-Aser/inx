@@ -77,13 +77,13 @@ class PageElement {
  * Contains a TextBlock for regular paragraph text.
  */
 class PageLine final : public PageElement {
-  std::shared_ptr<TextBlock> block;
+  TextBlock block;
 
  public:
-  PageLine(std::shared_ptr<TextBlock> block, const int16_t xPos, const int16_t yPos)
+  PageLine(TextBlock&& block, const int16_t xPos, const int16_t yPos)
       : PageElement(xPos, yPos), block(std::move(block)) {}
 
-  const TextBlock& getTextBlock() const { return *block; }
+  const TextBlock& getTextBlock() const { return block; }
 
   PageElementTag getTag() const override { return TAG_PageLine; }
   void render(GfxRenderer& renderer, int fontId, int xOffset, int yOffset,
@@ -97,14 +97,14 @@ class PageLine final : public PageElement {
  * Uses the specified headerFontId for rendering.
  */
 class PageHeader final : public PageElement {
-  std::shared_ptr<TextBlock> block;
+  TextBlock block;
   int headerFontId;
 
  public:
-  PageHeader(std::shared_ptr<TextBlock> block, const int16_t xPos, const int16_t yPos, int fontId)
+  PageHeader(TextBlock&& block, const int16_t xPos, const int16_t yPos, int fontId)
       : PageElement(xPos, yPos), block(std::move(block)), headerFontId(fontId) {}
 
-  const TextBlock& getTextBlock() const { return *block; }
+  const TextBlock& getTextBlock() const { return block; }
   int getHeaderFontId() const { return headerFontId; }
 
   PageElementTag getTag() const override { return TAG_PageHeader; }
@@ -120,14 +120,14 @@ class PageHeader final : public PageElement {
  * serialized page compatibility with older cache files.
  */
 class PageSmallCaps final : public PageElement {
-  std::shared_ptr<TextBlock> block;
+  TextBlock block;
   int compatFontId;
 
  public:
-  PageSmallCaps(std::shared_ptr<TextBlock> block, const int16_t xPos, const int16_t yPos, int fontId)
+  PageSmallCaps(TextBlock&& block, const int16_t xPos, const int16_t yPos, int fontId)
       : PageElement(xPos, yPos), block(std::move(block)), compatFontId(fontId) {}
 
-  const TextBlock& getTextBlock() const { return *block; }
+  const TextBlock& getTextBlock() const { return block; }
   int getCompatFontId() const { return compatFontId; }
 
   PageElementTag getTag() const override { return TAG_PageSmallCaps; }
@@ -341,11 +341,17 @@ class PageCssBorderBox final : public PageElement {
  */
 class Page {
  public:
-  std::vector<std::shared_ptr<PageElement>> elements;
+  std::vector<std::unique_ptr<PageElement>> elements;
+
+  void trimElementStorage() {
+    if (elements.capacity() > elements.size()) {
+      elements.shrink_to_fit();
+    }
+  }
 
   bool hasImages() const {
     return std::any_of(elements.begin(), elements.end(),
-                       [](const std::shared_ptr<PageElement>& element) { return element->getTag() == TAG_PageImage; });
+                       [](const std::unique_ptr<PageElement>& element) { return element->getTag() == TAG_PageImage; });
   }
 
   // True if at least one image on the page has continuous-tone content worth rendering in grayscale. Pages whose

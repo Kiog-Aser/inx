@@ -14,15 +14,29 @@
 
 class CssParser {
  public:
+  struct CssProperty {
+    uint8_t id = 0;
+    std::string value;
+  };
+  using CssProperties = std::vector<CssProperty>;
+
+  struct UsageFilter {
+    std::vector<std::string> tags;
+    std::vector<std::string> classes;
+    std::vector<std::string> ids;
+    bool empty() const { return tags.empty() && classes.empty() && ids.empty(); }
+  };
+
   struct CssRule {
     /** Lowercase selector; filled at parse time so hot paths do not reallocate/transform on every lookup. */
     std::string selectorLower;
     /** Index into sourcePaths_ (interned) — avoids storing the full CSS file path on every rule. */
     uint16_t sourcePathIndex = 0;
+    uint16_t propertyStart = 0;
+    uint16_t propertyCount = 0;
     /** Precomputed selector classifications so per-element scans avoid re-running string searches. */
     bool isPseudoElement = false;
     bool isFirstLetterPseudo = false;
-    std::map<std::string, std::string> properties;
   };
 
   CssParser();
@@ -30,7 +44,8 @@ class CssParser {
 
   // minFreeHeapBytes > 0: stop adding rules once free heap would drop below it, reserving heap for rendering
   // (image decode etc.) so a large stylesheet can't exhaust memory and abort.
-  void parse(const std::string& cssContent, const std::string& sourcePath = "", uint32_t minFreeHeapBytes = 0);
+  void parse(const std::string& cssContent, const std::string& sourcePath = "", uint32_t minFreeHeapBytes = 0,
+             const UsageFilter* usageFilter = nullptr);
   void clear();
   bool saveBinary(FsFile& file) const;
   bool loadBinary(FsFile& file);
@@ -69,6 +84,8 @@ class CssParser {
                       const std::string& styleAttr) const;
   bool isDisplayNone(const std::string& elementTagLower, const std::string& className, const std::string& id,
                      const std::string& styleAttr) const;
+  bool isFloatLeft(const std::string& elementTagLower, const std::string& className, const std::string& id,
+                   const std::string& styleAttr) const;
 
   /** Resolved inherited CSS font emphasis for the current element. */
   bool resolveFontBold(const std::string& elementTagLower, const std::string& className, const std::string& id,
@@ -82,7 +99,7 @@ class CssParser {
   uint8_t getFirstLetterDropCapLineCount(const std::string& elementTagLower, const std::string& className,
                                          const std::string& id, const std::string& styleAttr) const;
 
-  /** Resolved first-line text-indent in pixels (>= 0) from inline then stylesheet, including type selectors. */
+  /** Resolved first-line text-indent in pixels from inline then stylesheet, including type selectors. */
   int getTextIndentPx(const std::string& elementTagLower, const std::string& className, const std::string& id,
                       const std::string& styleAttr, int viewportWidth, int viewportHeight) const;
 
@@ -146,6 +163,7 @@ class CssParser {
 
  private:
   std::vector<CssRule> rules;
+  CssProperties properties_;
   /** Interned CSS file paths; CssRule::sourcePathIndex points here (used to resolve background-image URLs). */
   std::vector<std::string> sourcePaths_;
   uint16_t internSourcePath(const std::string& path);
@@ -176,8 +194,10 @@ class CssParser {
   const CssRule* winningRuleForProperty(const std::string& propName, const std::string& className,
                                         const std::string& id, const std::string& elementTagLower,
                                         bool ignoreContextual = false) const;
+  const std::string* rulePropertyValue(const CssRule& rule, const std::string& propName) const;
+  bool ruleHasProperty(const CssRule& rule, const std::string& propName) const;
 
-  void noteBodyHtmlTextAlign(const std::string& selectorRaw, const std::map<std::string, std::string>& properties);
+  void noteBodyHtmlTextAlign(const std::string& selectorRaw, const CssProperties& properties);
   std::string getCascadedPropertyValue(const std::string& propName, const std::string& className, const std::string& id,
                                        const std::string& styleAttr, const std::string& elementTagLower = "") const;
   bool getCascadedPropertyValueAndSource(const std::string& propName, const std::string& className,
@@ -186,8 +206,7 @@ class CssParser {
                                          std::string* outSourcePath) const;
   int mapTextAlignToStyleIndex(const std::string& rawValue) const;
 
-  void parsePropertiesForDimensions(const std::string& propertiesStr,
-                                    std::map<std::string, std::string>& properties) const;
+  void parsePropertiesForDimensions(const std::string& propertiesStr, CssProperties& properties) const;
   enum class PercentRefersTo { Width, Height };
   int parseDimensionValue(const std::string& value, int viewportWidth, int viewportHeight,
                           PercentRefersTo percentAxis) const;
