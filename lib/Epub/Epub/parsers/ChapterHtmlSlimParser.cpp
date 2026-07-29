@@ -2240,12 +2240,6 @@ void ChapterHtmlSlimParser::addHorizontalRule(const std::string& tagLower, const
       } else if (cssWidth > 0) {
         imgH = std::max(1, static_cast<int>((static_cast<int64_t>(imgH) * cssWidth) / std::max(1, imgW)));
         imgW = cssWidth;
-      } else if (cssHeight > 0) {
-        imgW = std::max(1, static_cast<int>((static_cast<int64_t>(imgW) * cssHeight) / std::max(1, imgH)));
-        imgH = cssHeight;
-      } else {
-        imgH = std::max(1, static_cast<int>((static_cast<int64_t>(imgH) * viewportWidth) / std::max(1, imgW)));
-        imgW = viewportWidth * .4;
       }
       // Keep it within the page.
       if (imgW > viewportWidth) {
@@ -2261,7 +2255,7 @@ void ChapterHtmlSlimParser::addHorizontalRule(const std::string& tagLower, const
       if (spacingTop <= 0 && currentPageNextY > 0) {
         applyVerticalSpacing(defaultHrGap);
       }
-      addImageToPage(cacheImgPath, imgW, imgH);
+      addImageToPage(cacheImgPath, imgW, imgH, cssHeight > 0 ? cssHeight : -1);
       renderedRule = true;
     }
   }
@@ -2497,7 +2491,8 @@ bool shouldUseGrayscaleForImageDimensions(const int imgW, const int imgH) {
 }
 }  // namespace
 
-void ChapterHtmlSlimParser::addImageToPage(const std::string& bmpPath, int imgW, int imgH) {
+void ChapterHtmlSlimParser::addImageToPage(const std::string& bmpPath, int imgW, int imgH, int reservedHeight) {
+  const int layoutHeight = std::max(imgH, reservedHeight);
   bool isExtraLarge = (imgW >= viewportWidth * 0.95 && imgH >= viewportHeight * 0.65);
   const bool grayscale = shouldUseGrayscaleForImageDimensions(imgW, imgH);
 
@@ -2540,7 +2535,7 @@ void ChapterHtmlSlimParser::addImageToPage(const std::string& bmpPath, int imgW,
     return;
   }
 
-  if (currentPageNextY + imgH > viewportHeight) {
+  if (currentPageNextY + layoutHeight > viewportHeight) {
     if (currentPage && !currentPage->elements.empty()) {
       completeCurrentPage();
     }
@@ -2553,9 +2548,10 @@ void ChapterHtmlSlimParser::addImageToPage(const std::string& bmpPath, int imgW,
   }
 
   int xPos = (imgW < viewportWidth) ? (viewportWidth - imgW) / 2 : 0;
-  addPlacedImage(xPos, currentPageNextY);
+  const int yPos = currentPageNextY + std::max(0, (layoutHeight - imgH) / 2);
+  addPlacedImage(xPos, yPos);
 
-  currentPageNextY += imgH + (renderer.text.getLineHeight(fontId) / 2);
+  currentPageNextY += layoutHeight + (renderer.text.getLineHeight(fontId) / 2);
 }
 
 /**

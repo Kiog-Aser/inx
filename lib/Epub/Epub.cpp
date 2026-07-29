@@ -942,10 +942,16 @@ const CssParser* Epub::getParsedCssParser(const CssParser::UsageFilter* usageFil
   Serial.printf("[EBP] Building %sCSS dictionary from %d CSS files\n", filtered ? "filtered " : "shared ", cssCount);
 
   constexpr size_t kMaxTotalCssSize = 192 * 1024;
-  constexpr uint32_t kCssReserveHeapBytes = 80 * 1024;
+  constexpr uint32_t kCssReserveHeapBytes = 96 * 1024;
+  constexpr uint32_t kCssEntryReadHeadroom = 56 * 1024;
   size_t totalCssSize = 0;
 
   for (int i = 0; i < cssCount && totalCssSize < kMaxTotalCssSize; ++i) {
+    if (ESP.getFreeHeap() < kCssReserveHeapBytes + kCssEntryReadHeadroom) {
+      Serial.printf("[EBP] CSS load stopped to reserve heap before file %d (free=%u, rules=%zu)\n", i,
+                    static_cast<unsigned>(ESP.getFreeHeap()), parsedCssParser_->getRuleCount());
+      break;
+    }
     try {
       const auto cssEntry = getCssItem(i);
       if (cssEntry.content.empty()) {
@@ -958,6 +964,11 @@ const CssParser* Epub::getParsedCssParser(const CssParser::UsageFilter* usageFil
       }
       totalCssSize += cssEntry.content.size();
       parsedCssParser_->parse(cssEntry.content, cssEntry.path, kCssReserveHeapBytes, usageFilter);
+      if (ESP.getFreeHeap() < kCssReserveHeapBytes + kCssEntryReadHeadroom) {
+        Serial.printf("[EBP] CSS load stopped to reserve heap after file %d (free=%u, rules=%zu)\n", i,
+                      static_cast<unsigned>(ESP.getFreeHeap()), parsedCssParser_->getRuleCount());
+        break;
+      }
     } catch (const std::exception& e) {
       Serial.printf("[EBP] Shared CSS load aborted at file %d (%s); keeping %zu rules\n", i, e.what(),
                     parsedCssParser_->getRuleCount());
@@ -971,6 +982,11 @@ const CssParser* Epub::getParsedCssParser(const CssParser::UsageFilter* usageFil
 
   Serial.printf("[EBP] %sCSS dictionary: %zu rules from %d bytes\n", filtered ? "Filtered " : "Shared ",
                 parsedCssParser_->getRuleCount(), static_cast<int>(totalCssSize));
+  if (filtered && parsedCssParser_->getRuleCount() == 0) {
+    parsedCssParser_.reset();
+    parsedCssLoaded_ = false;
+    return nullptr;
+  }
   if (filtered) {
   } else if (!saveParsedCssCache()) {
     Serial.printf("[EBP] Parsed CSS cache was not saved\n");

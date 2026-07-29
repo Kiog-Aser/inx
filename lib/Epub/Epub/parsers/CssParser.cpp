@@ -793,6 +793,14 @@ void CssParser::parse(const std::string& cssContent, const std::string& sourcePa
 
     if (braceCount != 0) break;
 
+#ifdef ARDUINO
+    if (minFreeHeapBytes > 0 && ESP.getFreeHeap() < minFreeHeapBytes + 12 * 1024) {
+      Serial.printf("[CSSP] Stopping CSS scan before rule allocation (free=%u, rules=%u)\n",
+                    static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(rules.size()));
+      break;
+    }
+#endif
+
     std::string propertiesStr = cssContent.substr(blockStart, pos - blockStart - 1);
 
     CssRule rule;

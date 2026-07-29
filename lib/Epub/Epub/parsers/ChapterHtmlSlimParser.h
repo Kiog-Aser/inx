@@ -286,7 +286,7 @@ class ChapterHtmlSlimParser {
   /**
    * Adds an image to the current page layout.
    */
-  void addImageToPage(const std::string& bmpPath, int imgW, int imgH);
+  void addImageToPage(const std::string& bmpPath, int imgW, int imgH, int reservedHeight = -1);
 
   /**
    * Ensures an image is cached as BMP format.
