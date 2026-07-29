@@ -65,7 +65,10 @@ static std::string chapterTitleForSpine(const Epub* epub, int spineIndex) {
 namespace {
 constexpr unsigned long goHomeMs = 1000;
 constexpr int statusBarMargin = 5;
-constexpr int statusBarFullGap = 10;
+constexpr int statusBarTopGap = 2;
+constexpr int statusBarCombinedTopGap = 1;
+constexpr int statusBarExtraPaddingMaxScreenMargin = 5;
+constexpr int statusBarFullGap = 2;
 constexpr int progressBarMarginTop = 10;
 constexpr unsigned long bookmarkHoldMs = 1000;
 constexpr bool kReaderHighQualityFastLut = true;
@@ -145,13 +148,18 @@ ViewportInfo EpubActivity::calculateViewport() {
   bool showProgressBar = (READER_SETTINGS.statusBarMiddle == SystemSetting::STATUS_ITEM_PROGRESS_BAR ||
                           READER_SETTINGS.statusBarMiddle == SystemSetting::STATUS_ITEM_PROGRESS_BAR_WITH_PERCENT);
 
+  const int fullBarHeight = StatusBar::reservedFullBarHeight();
   if (hasStatusBar) {
+    const int mainStatusBarTopGap = bookSettings.screenMargin <= statusBarExtraPaddingMaxScreenMargin
+                                        ? (fullBarHeight > 0 ? statusBarCombinedTopGap : statusBarTopGap)
+                                        : 0;
+    const int mainStatusBarReserve =
+        renderer.text.getLineHeight(ATKINSON_HYPERLEGIBLE_8_FONT_ID) + statusBarMargin + mainStatusBarTopGap;
     info.totalMarginBottom +=
-        statusBarMargin - bookSettings.screenMargin +
+        mainStatusBarReserve - bookSettings.screenMargin +
         (showProgressBar ? (ScreenComponents::BOOK_PROGRESS_BAR_HEIGHT + progressBarMarginTop) : 0);
   }
 
-  const int fullBarHeight = StatusBar::reservedFullBarHeight();
   if (hasStatusBar && fullBarHeight > 0) {
     info.totalMarginBottom += statusBarFullGap;
   }
