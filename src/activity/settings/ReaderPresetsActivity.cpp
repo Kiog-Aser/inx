@@ -128,7 +128,8 @@ const char* readerButtonActionLabel(const uint8_t action) {
                                         "Chapter Skip Previous",
                                         "Bookmark",
                                         "Table of Contents",
-                                        "Change Orientation"};
+                                        "Change Orientation",
+                                        "Apply Preset"};
   if (action >= SystemSetting::READER_BUTTON_ACTION_COUNT) {
     return "None";
   }

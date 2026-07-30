@@ -779,6 +779,11 @@ void EpubActivity::loop() {
     return;
   }
 
+  if (presetPicker_.isActive()) {
+    presetPicker_.handleInput(*this);
+    return;
+  }
+
   if (menuDrawerVisible && menuDrawer && !menuDrawer->isDismissed()) {
     menuDrawer->handleInput(mappedInput);
     return;
@@ -965,6 +970,10 @@ void EpubActivity::ensureMenuDrawer() {
               dictUi_.enter(*this);
               break;
             case MenuDrawer::MenuAction::SELECT_CHAPTER:
+              break;
+            case MenuDrawer::MenuAction::APPLY_PRESET:
+              renderScreen(true);
+              presetPicker_.enter(*this);
               break;
             case MenuDrawer::MenuAction::GO_TO_PERCENT:
               // Handled inside MenuDrawer itself (percentProvider/percentSelectedCallback below), same

@@ -23,7 +23,7 @@ constexpr int kPageHeaderTopPadding = 5;
 constexpr int kPageHeaderBottomPadding = 5;
 constexpr int kPageHeaderDividerThickness = 2;
 constexpr int kMenuBatteryRightMargin = 80;
-constexpr int kBottomMenuClockLeftMargin = 50;
+constexpr int kBottomMenuClockLeftMargin = 20;
 
 int x3ChromeAdjustment() { return gpio.deviceIsX3() ? 2 : 0; }
 

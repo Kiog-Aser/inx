@@ -110,6 +110,7 @@ MenuDrawer::MenuDrawer(GfxRenderer& renderer, ActionCallback onAction, DismissCa
   syncLayoutFromRenderer();
 
   menuItems.push_back({"Table of Contents", MenuAction::SELECT_CHAPTER});
+  menuItems.push_back({"Apply Preset", MenuAction::APPLY_PRESET});
   menuItems.push_back({"Go To Percent", MenuAction::GO_TO_PERCENT});
   menuItems.push_back({"Show Bookmarks", MenuAction::SHOW_BOOKMARKS});
   menuItems.push_back({"Annotations", MenuAction::SHOW_ANNOTATIONS});
