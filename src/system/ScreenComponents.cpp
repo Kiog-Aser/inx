@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <string>
 
+#include "state/SystemSetting.h"
 #include "system/Fonts.h"
 
 extern HalGPIO gpio;
@@ -29,6 +30,31 @@ void drawBatteryLightningBolt(const GfxRenderer& renderer, const int boltX, cons
   renderer.line.render(boltX + 1, boltY + 5, boltX + 4, boltY + 5, false);
   renderer.line.render(boltX + 2, boltY + 6, boltX + 3, boltY + 6, false);
   renderer.line.render(boltX + 1, boltY + 7, boltX + 2, boltY + 7, false);
+}
+
+bool formatMenuClock(char* out, const size_t outSize) {
+  if (!out || outSize == 0 || !gpio.deviceIsX3()) {
+    return false;
+  }
+
+  HalGPIO::DateTime dt;
+  if (!gpio.readDateTime(dt)) {
+    return false;
+  }
+
+  uint8_t hour = dt.hour;
+  if (SETTINGS.sleepClockTimeFormat == SystemSetting::CLOCK_12_HOUR) {
+    const char* meridiem = hour >= 12 ? "PM" : "AM";
+    hour %= 12;
+    if (hour == 0) {
+      hour = 12;
+    }
+    std::snprintf(out, outSize, "%02u:%02u %s", hour, dt.minute, meridiem);
+    return true;
+  }
+
+  std::snprintf(out, outSize, "%02u:%02u", hour, dt.minute);
+  return true;
 }
 
 }  // namespace
@@ -73,6 +99,30 @@ void ScreenComponents::drawBattery(const GfxRenderer& renderer, const int left, 
   if (charging) {
     drawBatteryLightningBolt(renderer, x + 4, y + 2);
   }
+}
+
+bool ScreenComponents::drawMenuClock(const GfxRenderer& renderer, const int left, const int top) {
+  char clockText[10] = {};
+  if (!formatMenuClock(clockText, sizeof(clockText))) {
+    return false;
+  }
+
+  renderer.text.render(ATKINSON_HYPERLEGIBLE_8_FONT_ID, left, top, clockText, true);
+  return true;
+}
+
+void ScreenComponents::drawMenuClockAndBattery(const GfxRenderer& renderer, const int batteryLeft, const int top,
+                                               const bool showBatteryPercentage) {
+  constexpr int kClockBatteryGap = 12;
+
+  char clockText[10] = {};
+  if (formatMenuClock(clockText, sizeof(clockText))) {
+    const int clockFont = ATKINSON_HYPERLEGIBLE_8_FONT_ID;
+    const int clockW = renderer.text.getWidth(clockFont, clockText);
+    renderer.text.render(clockFont, batteryLeft - kClockBatteryGap - clockW, top, clockText, true);
+  }
+
+  drawBattery(renderer, batteryLeft, top, showBatteryPercentage);
 }
 
 ScreenComponents::PopupLayout ScreenComponents::drawPopup(const GfxRenderer& renderer, const char* message) {

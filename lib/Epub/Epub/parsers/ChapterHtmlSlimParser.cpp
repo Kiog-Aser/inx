@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "../../../../src/util/StringUtils.h"
+#include "../../../../src/system/FontManager.h"
 #include "../../../KOReaderSync/htmlEntities.h"
 #include "../Page.h"
 #include "JpegToBmpConverter.h"
@@ -386,23 +387,32 @@ std::string trimAsciiWhitespace(std::string value) {
   return std::string(first, last);
 }
 
-bool isSceneBreakMarker(const std::string& text, std::string* normalized) {
+bool isSceneBreakMarker(const std::string& text, std::string* markerText) {
   const std::string trimmed = trimAsciiWhitespace(text);
-  if (trimmed == "..." || trimmed == ". . .") {
-    if (normalized) *normalized = "...";
-    return true;
+  if (trimmed.empty()) {
+    return false;
   }
-  if (trimmed == "***" || trimmed == "* * *") {
-    if (normalized) *normalized = "* * *";
-    return true;
+
+  int markerCount = 0;
+  const unsigned char* p = reinterpret_cast<const unsigned char*>(trimmed.c_str());
+  const unsigned char* const end = p + trimmed.size();
+  while (p < end) {
+    const uint32_t cp = utf8NextCodepoint(&p);
+    if (cp == '.' || cp == '*' || cp == 0x2022) {
+      ++markerCount;
+      continue;
+    }
+    if (cp == ' ' || cp == '\t') {
+      continue;
+    }
+    return false;
   }
-  constexpr const char* kBulletRun = "\xE2\x80\xA2\xE2\x80\xA2\xE2\x80\xA2";
-  constexpr const char* kBulletSpaced = "\xE2\x80\xA2 \xE2\x80\xA2 \xE2\x80\xA2";
-  if (trimmed == kBulletRun || trimmed == kBulletSpaced) {
-    if (normalized) *normalized = kBulletSpaced;
-    return true;
+
+  if (markerCount == 0 || markerCount > 6) {
+    return false;
   }
-  return false;
+  if (markerText) *markerText = trimmed;
+  return true;
 }
 
 }  // namespace
@@ -2565,8 +2575,12 @@ bool ChapterHtmlSlimParser::parseAndBuildPages(bool skipImageProcessing) {
   skipImages = skipImageProcessing;
   imageExtractCountForYield_ = 0;
   cssUsageFilter_ = CssParser::UsageFilter();
+  const bool usingSdReaderFont = fontId >= FontManager::SD_FONT_START_ID;
 
   if (!skipImageProcessing) {
+    if (usingSdReaderFont) {
+      FontManager::unloadAllSDFonts();
+    }
     imagePrefetchPassOnly_ = true;
     resetStructuralStateForParsePass();
     if (!parseHtmlThroughExpat(false)) {
@@ -2616,7 +2630,15 @@ bool ChapterHtmlSlimParser::parseAndBuildPages(bool skipImageProcessing) {
   currentTextBlockContentWidth = std::max(1, static_cast<int>(viewportWidth));
   pendingTopBorderElem_ = nullptr;
 
+  if (usingSdReaderFont) {
+    FontManager::unloadAllSDFonts();
+  }
   loadCssRules();
+  if (usingSdReaderFont && !FontManager::ensureReaderLayoutFonts(fontId, renderer)) {
+    Serial.printf("[%lu] [SCT] parseAndBuildPages failed reloading SD layout fonts font=%d internal=%s tmp=%s\n",
+                  millis(), fontId, internalPath.c_str(), filepath.c_str());
+    return false;
+  }
 
   TextBlock::Style initialBlockStyle = TextBlock::LEFT_ALIGN;
   if (paragraphAlignment <= 3) {
