@@ -1217,12 +1217,17 @@ void MenuDrawer::handleInput(MappedInputManager& input) {
 
   if (readDrawerListPrev(input, renderer)) {
     const int previousIndex = selectedIndex;
-    if (selectedIndex > 0) {
-      selectedIndex--;
-      const bool scrolled = selectedIndex < scrollOffset;
-      if (scrolled) {
+    const int totalItems = static_cast<int>(menuItems.size());
+    if (totalItems > 0) {
+      selectedIndex = (selectedIndex - 1 + totalItems) % totalItems;
+      const int maxScroll = std::max(0, totalItems - itemsPerPage);
+      bool scrolled = selectedIndex < scrollOffset || selectedIndex >= scrollOffset + itemsPerPage;
+      if (selectedIndex < scrollOffset) {
         scrollOffset = selectedIndex;
+      } else if (selectedIndex >= scrollOffset + itemsPerPage) {
+        scrollOffset = std::min(selectedIndex - itemsPerPage + 1, maxScroll);
       }
+      scrollOffset = std::max(0, std::min(scrollOffset, maxScroll));
       lastInputTime = currentTime;
       if (scrolled) {
         renderWithRefresh();
@@ -1232,13 +1237,17 @@ void MenuDrawer::handleInput(MappedInputManager& input) {
     }
   } else if (readDrawerListNext(input, renderer)) {
     const int previousIndex = selectedIndex;
-    if (selectedIndex < static_cast<int>(menuItems.size()) - 1) {
-      selectedIndex++;
-      int maxScroll = std::max(0, (int)menuItems.size() - itemsPerPage);
-      const bool scrolled = selectedIndex > scrollOffset + itemsPerPage - 1;
-      if (scrolled) {
+    const int totalItems = static_cast<int>(menuItems.size());
+    if (totalItems > 0) {
+      selectedIndex = (selectedIndex + 1) % totalItems;
+      const int maxScroll = std::max(0, totalItems - itemsPerPage);
+      bool scrolled = selectedIndex < scrollOffset || selectedIndex >= scrollOffset + itemsPerPage;
+      if (selectedIndex < scrollOffset) {
+        scrollOffset = selectedIndex;
+      } else if (selectedIndex >= scrollOffset + itemsPerPage) {
         scrollOffset = std::min(selectedIndex - itemsPerPage + 1, maxScroll);
       }
+      scrollOffset = std::max(0, std::min(scrollOffset, maxScroll));
       lastInputTime = currentTime;
       if (scrolled) {
         renderWithRefresh();

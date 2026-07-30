@@ -728,18 +728,25 @@ void CategorySettingsActivity::loop() {
   bool needRedraw = false;
 
   if (upPressed) {
-    if (selectedIndex > 0) {
-      selectedIndex--;
+    const int totalItems = static_cast<int>(menuItems.size());
+    if (totalItems > 0) {
+      selectedIndex = (selectedIndex - 1 + totalItems) % totalItems;
+      const int maxScroll = std::max(0, totalItems - itemsPerPage);
       if (selectedIndex < scrollOffset) scrollOffset = selectedIndex;
+      if (selectedIndex >= scrollOffset + itemsPerPage) scrollOffset = std::min(selectedIndex - itemsPerPage + 1, maxScroll);
+      scrollOffset = std::max(0, std::min(scrollOffset, maxScroll));
       needRedraw = true;
     }
   } else if (downPressed) {
-    if (selectedIndex < (int)menuItems.size() - 1) {
-      selectedIndex++;
-      int maxScroll = std::max(0, (int)menuItems.size() - itemsPerPage);
+    const int totalItems = static_cast<int>(menuItems.size());
+    if (totalItems > 0) {
+      selectedIndex = (selectedIndex + 1) % totalItems;
+      int maxScroll = std::max(0, totalItems - itemsPerPage);
+      if (selectedIndex < scrollOffset) scrollOffset = selectedIndex;
       if (selectedIndex > scrollOffset + itemsPerPage - 1) {
         scrollOffset = std::min(selectedIndex - itemsPerPage + 1, maxScroll);
       }
+      scrollOffset = std::max(0, std::min(scrollOffset, maxScroll));
       needRedraw = true;
     }
   } else if (confirmPressed) {

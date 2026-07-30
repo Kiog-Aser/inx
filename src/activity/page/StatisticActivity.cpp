@@ -969,18 +969,14 @@ void StatisticActivity::loop() {
   }
 
   if (upPressed) {
-    if (viewIndex > 0) {
-      viewIndex--;
-      updateRequired = true;
-    }
+    viewIndex = (viewIndex + totalViews - 1) % totalViews;
+    updateRequired = true;
     return;
   }
 
   if (downPressed) {
-    if (viewIndex < totalViews - 1) {
-      viewIndex++;
-      updateRequired = true;
-    }
+    viewIndex = (viewIndex + 1) % totalViews;
+    updateRequired = true;
     return;
   }
 }

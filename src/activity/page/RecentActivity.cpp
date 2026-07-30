@@ -1163,12 +1163,12 @@ void RecentActivity::loop() {
   }
 
   if (isListView) {
-    if (downPressed && selectorIndex < totalBooks - 1) {
-      selectorIndex++;
+    if (downPressed && totalBooks > 0) {
+      selectorIndex = (selectorIndex + 1) % totalBooks;
       selectorChanged = true;
     }
-    if (upPressed && selectorIndex > 0) {
-      selectorIndex--;
+    if (upPressed && totalBooks > 0) {
+      selectorIndex = (selectorIndex + totalBooks - 1) % totalBooks;
       selectorChanged = true;
     }
 
@@ -1190,11 +1190,11 @@ void RecentActivity::loop() {
       return;
     }
   } else {
-    if (downPressed && selectorIndex < totalBooks - 1) {
-      selectorIndex++;
+    if (downPressed && totalBooks > 0) {
+      selectorIndex = (selectorIndex + 1) % totalBooks;
       selectorChanged = true;
-    } else if (upPressed && selectorIndex > 0) {
-      selectorIndex--;
+    } else if (upPressed && totalBooks > 0) {
+      selectorIndex = (selectorIndex + totalBooks - 1) % totalBooks;
       selectorChanged = true;
     }
 

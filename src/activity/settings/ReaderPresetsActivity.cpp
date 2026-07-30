@@ -837,17 +837,23 @@ void ReaderPresetsActivity::handleListInput() {
   }
 
   if (mappedInput.wasPressed(MenuNav::itemPrev())) {
-    if (selectedRow_ > 0) {
-      selectedRow_--;
+    const int rows = rowCount();
+    if (rows > 0) {
+      selectedRow_ = (selectedRow_ - 1 + rows) % rows;
       if (selectedRow_ < scrollOffset_) scrollOffset_ = selectedRow_;
+      if (selectedRow_ >= scrollOffset_ + itemsPerPage_) scrollOffset_ = selectedRow_ - itemsPerPage_ + 1;
+      scrollOffset_ = std::max(0, std::min(scrollOffset_, std::max(0, rows - itemsPerPage_)));
       render();
     }
     return;
   }
   if (mappedInput.wasPressed(MenuNav::itemNext())) {
-    if (selectedRow_ < rowCount() - 1) {
-      selectedRow_++;
+    const int rows = rowCount();
+    if (rows > 0) {
+      selectedRow_ = (selectedRow_ + 1) % rows;
+      if (selectedRow_ < scrollOffset_) scrollOffset_ = selectedRow_;
       if (selectedRow_ >= scrollOffset_ + itemsPerPage_) scrollOffset_ = selectedRow_ - itemsPerPage_ + 1;
+      scrollOffset_ = std::max(0, std::min(scrollOffset_, std::max(0, rows - itemsPerPage_)));
       render();
     }
     return;
