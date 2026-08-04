@@ -154,6 +154,8 @@ int UiTheme::drawPageHeader(const GfxRenderer& renderer, const char* title, cons
 
 void UiTheme::drawButtonHints(const GfxRenderer& renderer, const int fontId, const char* btn1, const char* btn2,
                               const char* btn3, const char* btn4) const {
+  // Hide-button-hints is enforced inside UiRender::buttonHints (global policy).
+  // Hub chrome: when main tabs sit on the bottom row, they replace the hint bar.
   if (!mainTabsAtBottom()) {
     renderer.ui.buttonHints(fontId, btn1, btn2, btn3, btn4);
   }
