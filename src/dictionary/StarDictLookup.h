@@ -66,6 +66,8 @@ class StarDictLookup {
   };
 
   struct DefCacheEntry {
+    DefCacheEntry(std::string key, std::string def, bool trunc)
+        : keyLower(std::move(key)), definition(std::move(def)), truncated(trunc) {}
     std::string keyLower;
     std::string definition;
     bool truncated = false;

@@ -15,6 +15,7 @@
 
 namespace {
 constexpr int kMainTabCount = 5;
+constexpr int kMainTabIconSrc = 40;
 constexpr int kMainTabIconSize = 38;
 constexpr int kSelectedBorderWidth = 38;
 constexpr int kSelectedBorderHeight = 5;
@@ -89,8 +90,8 @@ void UiTheme::drawMainTabBar(const GfxRenderer& renderer, const int selectedInde
     const int iconY = tabY + (tabH - kMainTabIconSize) / 2 + (mainTabsAtBottom() ? kBottomTabIconNudgeY : 5);
 
     auto drawTabIcon = [&](const uint8_t* icon) {
-      renderer.bitmap.icon(icon, iconX, iconY, kMainTabIconSize, kMainTabIconSize, BitmapRender::Orientation::None,
-                           false);
+      renderer.bitmap.iconScaled(icon, iconX, iconY, kMainTabIconSrc, kMainTabIconSrc, kMainTabIconSize,
+                                 kMainTabIconSize, BitmapRender::Orientation::None, false);
     };
     switch (i) {
       case 0:
