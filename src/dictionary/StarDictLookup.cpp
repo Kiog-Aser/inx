@@ -5,50 +5,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
+
+#include <esp_task_wdt.h>
 
 #include "util/StringUtils.h"
 
 namespace {
-
-uint32_t readBigEndian32(FsFile& f) {
-  uint8_t b[4] = {0, 0, 0, 0};
-  if (f.read(b, 4) != 4) {
-    return 0;
-  }
-  return (static_cast<uint32_t>(b[0]) << 24) | (static_cast<uint32_t>(b[1]) << 16) |
-         (static_cast<uint32_t>(b[2]) << 8) | static_cast<uint32_t>(b[3]);
-}
-
-uint64_t readBigEndian64(FsFile& f) {
-  uint8_t b[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-  if (f.read(b, 8) != 8) {
-    return 0;
-  }
-  uint64_t v = 0;
-  for (int i = 0; i < 8; ++i) {
-    v = (v << 8) | static_cast<uint64_t>(b[i]);
-  }
-  return v;
-}
-
-/** Reads a null-terminated word from f into out. Returns false on EOF before a terminator or if
- *  the word looks corrupt (unreasonably long, which would otherwise scan indefinitely). */
-bool readCString(FsFile& f, std::string& out) {
-  out.clear();
-  char c = 0;
-  while (true) {
-    if (f.read(&c, 1) != 1) {
-      return false;
-    }
-    if (c == '\0') {
-      return true;
-    }
-    out += c;
-    if (out.size() > 256) {
-      return false;
-    }
-  }
-}
 
 std::string toLowerCopy(const std::string& s) {
   std::string out = s;
@@ -64,20 +27,13 @@ std::string toTitleCaseCopy(const std::string& s) {
   return out;
 }
 
-/** Strips leading/trailing characters that aren't letters/digits/apostrophe/hyphen, so a word
- *  lifted straight from rendered book text (with trailing commas/periods/quotes) can still match
- *  a dictionary entry. */
-std::string stripPunctuation(const std::string& s) {
-  size_t start = 0;
-  size_t end = s.size();
-  auto keep = [](unsigned char c) { return std::isalnum(c) || c == '\'' || c == '-'; };
-  while (start < end && !keep(static_cast<unsigned char>(s[start]))) {
-    ++start;
-  }
-  while (end > start && !keep(static_cast<unsigned char>(s[end - 1]))) {
-    --end;
-  }
-  return s.substr(start, end - start);
+bool isWordByte(const unsigned char c) {
+  return c >= 0x80 || std::isalnum(c) != 0 || c == '\'' || c == '-';
+}
+
+/** UTF-8 General Punctuation U+2000–U+206F (curly quotes, dashes) is E2 80/81 xx. */
+bool isGeneralPunctuationAt(const unsigned char* b, const size_t i, const size_t end) {
+  return i + 2 < end && b[i] == 0xE2 && (b[i + 1] == 0x80 || b[i + 1] == 0x81);
 }
 
 /** Generates candidate base forms for a possibly-inflected English word (possessive, plural,
@@ -94,12 +50,13 @@ std::vector<std::string> stemCandidates(const std::string& lower) {
     }
   };
 
-  // Possessive: "dog's" -> "dog" (stripPunctuation keeps apostrophes, so this can reach here).
   if (n > 2 && lower[n - 2] == '\'' && lower[n - 1] == 's') {
     add(lower.substr(0, n - 2));
   }
+  if (n > 4 && lower.compare(n - 4, 4, "\xE2\x80\x99s") == 0) {
+    add(lower.substr(0, n - 4));
+  }
 
-  // -ing: running->runn->run (doubled consonant), making->make (silent e), jumping->jump.
   if (n > 4 && lower.compare(n - 3, 3, "ing") == 0) {
     const std::string base = lower.substr(0, n - 3);
     add(base);
@@ -109,12 +66,10 @@ std::vector<std::string> stemCandidates(const std::string& lower) {
     }
   }
 
-  // -ied: tried->tri->try.
   if (n > 3 && lower.compare(n - 3, 3, "ied") == 0) {
     add(lower.substr(0, n - 3) + "y");
   }
 
-  // -ed: jumped->jump, liked/lik->like, stopped/stopp->stop.
   if (n > 3 && lower.compare(n - 2, 2, "ed") == 0) {
     const std::string base = lower.substr(0, n - 2);
     add(base);
@@ -124,17 +79,14 @@ std::vector<std::string> stemCandidates(const std::string& lower) {
     }
   }
 
-  // -ies: flies->fly, berries->berry.
   if (n > 4 && lower.compare(n - 3, 3, "ies") == 0) {
     add(lower.substr(0, n - 3) + "y");
   }
 
-  // -es: boxes->box, watches->watch.
   if (n > 3 && lower.compare(n - 2, 2, "es") == 0) {
     add(lower.substr(0, n - 2));
   }
 
-  // -s: books->book (skip "ss" endings like "glass" and words already handled above).
   if (n > 2 && lower[n - 1] == 's' && lower[n - 2] != 's') {
     add(lower.substr(0, n - 1));
   }
@@ -142,13 +94,145 @@ std::vector<std::string> stemCandidates(const std::string& lower) {
   return out;
 }
 
+void pushUnique(std::vector<std::string>& list, const std::string& s) {
+  if (s.empty()) {
+    return;
+  }
+  if (std::find(list.begin(), list.end(), s) == list.end()) {
+    list.push_back(s);
+  }
+}
+
+bool writeLe32(FsFile& file, const uint32_t value) {
+  return file.write(reinterpret_cast<const uint8_t*>(&value), 4) == 4;
+}
+
+bool readLe32(FsFile& file, uint32_t& value) {
+  return file.read(reinterpret_cast<uint8_t*>(&value), 4) == 4;
+}
+
+// Same layout as CrossPoint 1.5 .qidx, plus a flags word (version 2) for sort-order.
+constexpr uint32_t kQidxMagic = 0x58444951;  // "QIDX" little-endian
+constexpr uint32_t kQidxVersion = 2;
+constexpr uint32_t kQidxHeaderWords = 6;
+constexpr uint32_t kDefinitionHeapHeadroomBytes = 8 * 1024;
+
 }  // namespace
 
-int StarDictLookup::compareWord(const std::string& a, const std::string& b) {
-  // Plain byte-order comparison, matching StarDict's conventional strcmp-based .idx sort - this is
-  // the true on-disk order the checkpoint binary search relies on.
-  return a.compare(b);
+// ---------------------------------------------------------------------------
+// IdxCursor - buffered sequential .idx access
+// ---------------------------------------------------------------------------
+
+StarDictLookup::IdxCursor::IdxCursor(FsFile& file, const uint32_t fileSize) : file_(file), fileSize_(fileSize) {}
+
+bool StarDictLookup::IdxCursor::fillFrom(const uint32_t absOffset) {
+  if (absOffset >= fileSize_) {
+    bufBase_ = absOffset;
+    bufLen_ = 0;
+    return false;
+  }
+  if (!file_.seekSet(absOffset)) {
+    bufBase_ = absOffset;
+    bufLen_ = 0;
+    return false;
+  }
+  const uint32_t toRead = std::min(kBufSize, fileSize_ - absOffset);
+  const int n = file_.read(buf_, toRead);
+  if (n <= 0) {
+    bufBase_ = absOffset;
+    bufLen_ = 0;
+    return false;
+  }
+  bufBase_ = absOffset;
+  bufLen_ = static_cast<uint32_t>(n);
+  return true;
 }
+
+bool StarDictLookup::IdxCursor::ensure(const uint32_t needBytes) {
+  if (pos_ >= fileSize_) {
+    return false;
+  }
+  if (pos_ >= bufBase_ && (pos_ + needBytes) <= (bufBase_ + bufLen_)) {
+    return true;
+  }
+  // Prefer filling a fresh window starting at pos_. If the remaining file is shorter than needBytes
+  // we still succeed as long as at least one byte is available (callers check partial failures).
+  return fillFrom(pos_) && bufLen_ > 0;
+}
+
+bool StarDictLookup::IdxCursor::seek(const uint32_t absOffset) {
+  pos_ = absOffset;
+  if (pos_ >= bufBase_ && pos_ < (bufBase_ + bufLen_)) {
+    return pos_ <= fileSize_;
+  }
+  // Lazy: don't hit the SD until the next read. Mark buffer empty so ensure() refills.
+  if (pos_ < bufBase_ || pos_ >= (bufBase_ + bufLen_)) {
+    bufLen_ = 0;
+  }
+  return pos_ <= fileSize_;
+}
+
+bool StarDictLookup::IdxCursor::readRaw(uint8_t* dest, const uint32_t n) {
+  uint32_t remaining = n;
+  uint32_t wrote = 0;
+  while (remaining > 0) {
+    if (!ensure(1)) {
+      return false;
+    }
+    const uint32_t bufOff = pos_ - bufBase_;
+    const uint32_t avail = bufLen_ - bufOff;
+    const uint32_t take = std::min(remaining, avail);
+    std::memcpy(dest + wrote, buf_ + bufOff, take);
+    pos_ += take;
+    wrote += take;
+    remaining -= take;
+  }
+  return true;
+}
+
+bool StarDictLookup::IdxCursor::readCString(std::string& out) {
+  out.clear();
+  while (true) {
+    if (!ensure(1)) {
+      return false;
+    }
+    const uint8_t c = buf_[pos_ - bufBase_];
+    ++pos_;
+    if (c == 0) {
+      return true;
+    }
+    out.push_back(static_cast<char>(c));
+    if (out.size() > 256) {
+      return false;
+    }
+  }
+}
+
+bool StarDictLookup::IdxCursor::readBE32(uint32_t& out) {
+  uint8_t b[4];
+  if (!readRaw(b, 4)) {
+    return false;
+  }
+  out = (static_cast<uint32_t>(b[0]) << 24) | (static_cast<uint32_t>(b[1]) << 16) |
+        (static_cast<uint32_t>(b[2]) << 8) | static_cast<uint32_t>(b[3]);
+  return true;
+}
+
+bool StarDictLookup::IdxCursor::readBE64(uint64_t& out) {
+  uint8_t b[8];
+  if (!readRaw(b, 8)) {
+    return false;
+  }
+  out = 0;
+  for (int i = 0; i < 8; ++i) {
+    out = (out << 8) | static_cast<uint64_t>(b[i]);
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// StarDictLookup
+// ---------------------------------------------------------------------------
 
 void StarDictLookup::close() {
   if (idxFile_) {
@@ -157,14 +241,16 @@ void StarDictLookup::close() {
   if (dictFile_) {
     dictFile_.close();
   }
-  // swap, not .clear() - checkpoints_ is the in-RAM index built by buildCheckpoints() (hundreds of
-  // entries for a large dictionary), and .clear() alone would leave that capacity reserved.
-  std::vector<Checkpoint>().swap(checkpoints_);
+  // swap, not .clear() — sampleOffsets_ can be a few thousand uint32s; .clear() would keep capacity.
+  std::vector<uint32_t>().swap(sampleOffsets_);
+  std::vector<DefCacheEntry>().swap(defCache_);
+  std::string().swap(folderPath_);
   std::string().swap(bookname_);
   std::string().swap(sameTypeSequence_);
   wordCount_ = 0;
   idxFileSize_ = 0;
   use64BitOffsets_ = false;
+  caseInsensitiveSort_ = false;
   isOpen_ = false;
 }
 
@@ -210,6 +296,10 @@ bool StarDictLookup::parseIfo(const std::string& ifoPath) {
 }
 
 bool StarDictLookup::open(const std::string& folderPath) {
+  // Already open on the same folder - keep warm index/files (common when dictionary mode is re-entered).
+  if (isOpen_ && folderPath_ == folderPath) {
+    return true;
+  }
   close();
 
   std::string ifoPath, idxPath, dictPath;
@@ -254,9 +344,7 @@ bool StarDictLookup::open(const std::string& folderPath) {
   }
 
   // Some third-party-generated .ifo files carry a stale/wrong idxfilesize (e.g. after the .idx was
-  // regenerated by a converter that didn't update the header). Always trust the actual on-disk size -
-  // buildCheckpoints()/lookupViaLinearScan() bound their scans by this value, so a wrong number here
-  // would silently truncate or overrun the index.
+  // regenerated by a converter that didn't update the header). Always trust the actual on-disk size.
   const uint32_t actualIdxSize = static_cast<uint32_t>(idxFile_.fileSize());
   if (idxFileSize_ != actualIdxSize) {
     Serial.printf("[%lu] [DICT] .ifo idxfilesize=%u does not match actual .idx size=%u - using actual\n", millis(),
@@ -266,136 +354,383 @@ bool StarDictLookup::open(const std::string& folderPath) {
   Serial.printf("[%lu] [DICT] .idx actual size=%u .dict actual size=%llu\n", millis(), idxFileSize_,
                 static_cast<unsigned long long>(dictFile_.fileSize()));
 
-  if (!buildCheckpoints()) {
-    Serial.printf("[%lu] [DICT] Could not build index checkpoints for %s\n", millis(), folderPath.c_str());
+  const unsigned long t0 = millis();
+  const std::string qidxPath = folderPath + "/" + kSampleIndexFileName;
+  if (!loadSampleIndex(qidxPath) && !buildSampleIndex(qidxPath)) {
+    Serial.printf("[%lu] [DICT] Could not load or build sample index for %s\n", millis(), folderPath.c_str());
     close();
     return false;
   }
+  SdMan.remove((folderPath + "/.inx-stardict-cp").c_str());
 
+  folderPath_ = folderPath;
   isOpen_ = true;
-  Serial.printf("[%lu] [DICT] Opened '%s' (%u words, %u checkpoints, %s offsets)\n", millis(), bookname_.c_str(),
-                wordCount_, static_cast<unsigned>(checkpoints_.size()), use64BitOffsets_ ? "64-bit" : "32-bit");
+  Serial.printf("[%lu] [DICT] Opened '%s' (%u words, %u samples, %s offsets, sort=%s) in %lums\n", millis(),
+                bookname_.c_str(), wordCount_, static_cast<unsigned>(sampleOffsets_.size()),
+                use64BitOffsets_ ? "64-bit" : "32-bit", caseInsensitiveSort_ ? "case-insensitive" : "byte-order",
+                millis() - t0);
   return true;
 }
 
-bool StarDictLookup::readIdxEntryAt(const uint32_t idxOffset, std::string& outEntryText, uint64_t& outDictOffset,
-                                    uint32_t& outDictSize, uint32_t& outNextOffset) {
-  if (!idxFile_.seekSet(idxOffset)) {
+bool StarDictLookup::readIdxEntry(IdxCursor& cur, std::string& outEntryText, uint64_t& outDictOffset,
+                                  uint32_t& outDictSize) {
+  if (!cur.readCString(outEntryText)) {
     return false;
   }
-  if (!readCString(idxFile_, outEntryText)) {
+  if (use64BitOffsets_) {
+    if (!cur.readBE64(outDictOffset)) {
+      return false;
+    }
+  } else {
+    uint32_t off32 = 0;
+    if (!cur.readBE32(off32)) {
+      return false;
+    }
+    outDictOffset = off32;
+  }
+  return cur.readBE32(outDictSize);
+}
+
+std::string StarDictLookup::stripSurroundingPunctuation(const std::string& word) {
+  const auto* b = reinterpret_cast<const unsigned char*>(word.data());
+  size_t start = 0;
+  size_t end = word.size();
+  while (start < end) {
+    if (!isWordByte(b[start])) {
+      ++start;
+    } else if (isGeneralPunctuationAt(b, start, end)) {
+      start += 3;
+    } else {
+      break;
+    }
+  }
+  while (end > start) {
+    if (!isWordByte(b[end - 1])) {
+      --end;
+    } else if (end - start >= 3 && isGeneralPunctuationAt(b, end - 3, end)) {
+      end -= 3;
+    } else {
+      break;
+    }
+  }
+  return word.substr(start, end - start);
+}
+
+bool StarDictLookup::needsIndexBuild(const std::string& folderPath) {
+  const std::string qidxPath = folderPath + "/" + kSampleIndexFileName;
+  FsFile file;
+  if (!SdMan.openFileForRead("DICT", qidxPath, file)) {
+    return true;
+  }
+  uint32_t magic = 0;
+  uint32_t version = 0;
+  uint32_t interval = 0;
+  const bool ok = readLe32(file, magic) && readLe32(file, version) && readLe32(file, interval) &&
+                  magic == kQidxMagic && version == kQidxVersion && interval == kSampleInterval;
+  file.close();
+  return !ok;
+}
+
+bool StarDictLookup::loadSampleIndex(const std::string& qidxPath) {
+  sampleOffsets_.clear();
+  FsFile file;
+  if (!SdMan.openFileForRead("DICT", qidxPath, file)) {
     return false;
   }
-  outDictOffset = use64BitOffsets_ ? readBigEndian64(idxFile_) : static_cast<uint64_t>(readBigEndian32(idxFile_));
-  outDictSize = readBigEndian32(idxFile_);
-  outNextOffset = static_cast<uint32_t>(idxFile_.position());
+  uint32_t magic = 0;
+  uint32_t version = 0;
+  uint32_t interval = 0;
+  uint32_t sampleCount = 0;
+  uint32_t cachedIdxSize = 0;
+  uint32_t flags = 0;
+  if (!readLe32(file, magic) || !readLe32(file, version) || !readLe32(file, interval) ||
+      !readLe32(file, sampleCount) || !readLe32(file, cachedIdxSize) || !readLe32(file, flags) ||
+      magic != kQidxMagic || version != kQidxVersion || interval != kSampleInterval ||
+      cachedIdxSize != idxFileSize_ || sampleCount == 0 ||
+      sampleCount > std::max<uint32_t>(1u, idxFileSize_ / 9u / kSampleInterval + 2u)) {
+    file.close();
+    return false;
+  }
+
+  std::vector<uint32_t> loaded(sampleCount);
+  if (file.read(reinterpret_cast<uint8_t*>(loaded.data()), sampleCount * 4) !=
+      static_cast<int>(sampleCount * 4)) {
+    file.close();
+    return false;
+  }
+  file.close();
+  if (loaded[0] != 0) {
+    return false;
+  }
+
+  sampleOffsets_ = std::move(loaded);
+  caseInsensitiveSort_ = (flags & 1u) != 0;
+  Serial.printf("[%lu] [DICT] Loaded %u qidx samples (%s sort)\n", millis(),
+                static_cast<unsigned>(sampleOffsets_.size()),
+                caseInsensitiveSort_ ? "case-insensitive" : "byte-order");
   return true;
 }
 
-bool StarDictLookup::buildCheckpoints() {
-  checkpoints_.clear();
-  uint32_t offset = 0;
+bool StarDictLookup::buildSampleIndex(const std::string& qidxPath) {
+  sampleOffsets_.clear();
+  FsFile out;
+  if (!SdMan.openFileForWrite("DICT", qidxPath, out)) {
+    return false;
+  }
+
+  const uint32_t placeholder[kQidxHeaderWords] = {};
+  bool ok = out.write(reinterpret_cast<const uint8_t*>(placeholder), sizeof(placeholder)) == sizeof(placeholder) &&
+            writeLe32(out, 0);
+  uint32_t sampleCount = ok ? 1 : 0;
+
+  IdxCursor cur(idxFile_, idxFileSize_);
+  if (!ok || !cur.seek(0)) {
+    out.close();
+    SdMan.remove(qidxPath.c_str());
+    return false;
+  }
+
   uint32_t count = 0;
-  while (offset < idxFileSize_) {
+  std::string prevText;
+  std::string prevLower;
+  bool havePrev = false;
+  uint32_t byteOrderViolations = 0;
+  uint32_t caseFoldViolations = 0;
+
+  while (ok && cur.position() < idxFileSize_) {
+    const uint32_t entryOffset = cur.position();
     std::string entryText;
     uint64_t dictOffset = 0;
-    uint32_t dictSize = 0, nextOffset = 0;
-    if (!readIdxEntryAt(offset, entryText, dictOffset, dictSize, nextOffset)) {
-      Serial.printf("[%lu] [DICT] buildCheckpoints: read failed at offset=%u after %u entries (idxFileSize=%u)\n",
-                    millis(), offset, count, idxFileSize_);
+    uint32_t dictSize = 0;
+    if ((count & 0xFF) == 0) {
+      esp_task_wdt_reset();
+    }
+    if (!readIdxEntry(cur, entryText, dictOffset, dictSize)) {
+      Serial.printf("[%lu] [DICT] buildSampleIndex: read failed at offset=%u after %u entries\n", millis(),
+                    entryOffset, count);
       break;
     }
-    if (count % kCheckpointStride == 0) {
-      checkpoints_.push_back(Checkpoint{offset, entryText});
-      if (checkpoints_.size() <= 3) {
-        Serial.printf("[%lu] [DICT] checkpoint #%u @offset=%u entry='%s'\n", millis(),
-                      static_cast<unsigned>(checkpoints_.size() - 1), offset, entryText.c_str());
+    if (cur.position() <= entryOffset) {
+      Serial.printf("[%lu] [DICT] buildSampleIndex: non-advancing entry at offset=%u\n", millis(), entryOffset);
+      break;
+    }
+
+    const std::string entryLower = toLowerCopy(entryText);
+    if (havePrev) {
+      if (prevText.compare(entryText) > 0) {
+        ++byteOrderViolations;
+      }
+      if (prevLower.compare(entryLower) > 0) {
+        ++caseFoldViolations;
       }
     }
+    prevText = std::move(entryText);
+    prevLower = std::move(entryLower);
+    havePrev = true;
     ++count;
-    if (nextOffset <= offset) {
-      // Malformed/looping entry - stop rather than spin forever.
-      Serial.printf("[%lu] [DICT] buildCheckpoints: non-advancing entry at offset=%u ('%s') - stopping\n", millis(),
-                    offset, entryText.c_str());
-      break;
+    if (count % kSampleInterval == 0 && cur.position() < idxFileSize_) {
+      ok = writeLe32(out, cur.position());
+      ++sampleCount;
     }
-    offset = nextOffset;
   }
-  Serial.printf("[%lu] [DICT] buildCheckpoints: scanned %u entries total (.ifo wordcount=%u), %u checkpoints, "
-                "last checkpoint entry='%s'\n",
-                millis(), count, wordCount_, static_cast<unsigned>(checkpoints_.size()),
-                checkpoints_.empty() ? "" : checkpoints_.back().entryText.c_str());
-  return !checkpoints_.empty();
+
+  const uint32_t violationBudget = std::max<uint32_t>(4, count / 5000);
+  caseInsensitiveSort_ = (caseFoldViolations <= violationBudget) && (byteOrderViolations > violationBudget);
+  const uint32_t flags = caseInsensitiveSort_ ? 1u : 0u;
+  const uint32_t header[kQidxHeaderWords] = {kQidxMagic, kQidxVersion, kSampleInterval, sampleCount, idxFileSize_,
+                                             flags};
+  ok = ok && sampleCount > 0 && out.seekSet(0) &&
+       out.write(reinterpret_cast<const uint8_t*>(header), sizeof(header)) == sizeof(header);
+  out.close();
+  if (!ok) {
+    Serial.printf("[%lu] [DICT] Index build failed, removing %s\n", millis(), qidxPath.c_str());
+    SdMan.remove(qidxPath.c_str());
+    return false;
+  }
+
+  Serial.printf("[%lu] [DICT] Indexed %u entries (%u samples, sort=%s)\n", millis(), count, sampleCount,
+                caseInsensitiveSort_ ? "case-insensitive" : "byte-order");
+  return loadSampleIndex(qidxPath);
 }
 
-bool StarDictLookup::lookupViaCheckpoints(const std::string& candidate, uint64_t& outDictOffset,
-                                          uint32_t& outDictSize) {
-  if (checkpoints_.empty()) {
-    return false;
+int StarDictLookup::compareForSearch(const std::string& a, const std::string& aLower, const std::string& b,
+                                     const std::string& bLower) const {
+  if (caseInsensitiveSort_) {
+    return aLower.compare(bLower);
   }
-  // Binary search checkpoints_ for the last checkpoint whose word is <= candidate. Only correct if
-  // .idx is actually sorted in plain byte order, per the documented StarDict convention.
-  size_t lo = 0, hi = checkpoints_.size();
-  while (lo < hi) {
-    const size_t mid = lo + (hi - lo) / 2;
-    if (compareWord(checkpoints_[mid].entryText, candidate) <= 0) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
-    }
-  }
-  if (lo == 0) {
-    return false;
-  }
-  const uint32_t scanStart = checkpoints_[lo - 1].idxOffset;
-  const uint32_t scanEnd = (lo < checkpoints_.size()) ? checkpoints_[lo].idxOffset : idxFileSize_;
+  return a.compare(b);
+}
 
-  uint32_t offset = scanStart;
-  while (offset < scanEnd) {
-    std::string entryWord;
-    uint64_t dictOffset = 0;
-    uint32_t dictSize = 0, nextOffset = 0;
-    if (!readIdxEntryAt(offset, entryWord, dictOffset, dictSize, nextOffset)) {
+bool StarDictLookup::lookupViaSamples(const std::string& candidate, const std::string& candidateLower,
+                                      uint64_t& outDictOffset, uint32_t& outDictSize) {
+  if (sampleOffsets_.empty()) {
+    return false;
+  }
+
+  IdxCursor cur(idxFile_, idxFileSize_);
+  size_t lo = 0;
+  size_t hi = sampleOffsets_.size() - 1;
+  while (lo < hi) {
+    const size_t mid = (lo + hi + 1) / 2;
+    if (!cur.seek(sampleOffsets_[mid])) {
+      lo = 0;
       break;
     }
-    const int cmp = compareWord(entryWord, candidate);
+    std::string sampleWord;
+    uint64_t unusedOffset = 0;
+    uint32_t unusedSize = 0;
+    if (!readIdxEntry(cur, sampleWord, unusedOffset, unusedSize)) {
+      lo = 0;
+      break;
+    }
+    const std::string sampleLower = toLowerCopy(sampleWord);
+    if (compareForSearch(sampleWord, sampleLower, candidate, candidateLower) <= 0) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+
+  const uint32_t scanStart = sampleOffsets_[lo];
+  const uint32_t scanEnd = (lo + 1 < sampleOffsets_.size()) ? sampleOffsets_[lo + 1] : idxFileSize_;
+  if (!cur.seek(scanStart)) {
+    return false;
+  }
+
+  while (cur.position() < scanEnd) {
+    std::string entryWord;
+    uint64_t dictOffset = 0;
+    uint32_t dictSize = 0;
+    if (!readIdxEntry(cur, entryWord, dictOffset, dictSize)) {
+      break;
+    }
+    const std::string entryLower = toLowerCopy(entryWord);
+    const int cmp = compareForSearch(entryWord, entryLower, candidate, candidateLower);
     if (cmp == 0) {
       outDictOffset = dictOffset;
       outDictSize = dictSize;
       return true;
     }
     if (cmp > 0) {
-      break;  // passed where candidate would sort - not present in this checkpoint bracket.
-    }
-    if (nextOffset <= offset) {
       break;
     }
-    offset = nextOffset;
   }
   return false;
 }
 
-bool StarDictLookup::lookupViaLinearScan(const std::string& candidateLower, uint64_t& outDictOffset,
-                                         uint32_t& outDictSize) {
-  uint32_t offset = 0;
-  while (offset < idxFileSize_) {
+bool StarDictLookup::lookupViaLinearScan(const std::vector<std::string>& candidatesLower, std::string& outHitLower,
+                                         uint64_t& outDictOffset, uint32_t& outDictSize) {
+  if (candidatesLower.empty()) {
+    return false;
+  }
+
+  int bestPriority = -1;
+  uint64_t bestOffset = 0;
+  uint32_t bestSize = 0;
+  std::string bestLower;
+
+  IdxCursor cur(idxFile_, idxFileSize_);
+  if (!cur.seek(0)) {
+    return false;
+  }
+
+  uint32_t scanned = 0;
+  while (cur.position() < idxFileSize_) {
+    if ((scanned & 0xFF) == 0) {
+      esp_task_wdt_reset();
+    }
+    ++scanned;
+
     std::string entryWord;
     uint64_t dictOffset = 0;
-    uint32_t dictSize = 0, nextOffset = 0;
-    if (!readIdxEntryAt(offset, entryWord, dictOffset, dictSize, nextOffset)) {
+    uint32_t dictSize = 0;
+    if (!readIdxEntry(cur, entryWord, dictOffset, dictSize)) {
       break;
     }
-    if (toLowerCopy(entryWord) == candidateLower) {
-      outDictOffset = dictOffset;
-      outDictSize = dictSize;
+    const std::string entryLower = toLowerCopy(entryWord);
+    for (size_t i = 0; i < candidatesLower.size(); ++i) {
+      if (entryLower == candidatesLower[i]) {
+        if (bestPriority < 0 || static_cast<int>(i) < bestPriority) {
+          bestPriority = static_cast<int>(i);
+          bestOffset = dictOffset;
+          bestSize = dictSize;
+          bestLower = entryLower;
+          if (bestPriority == 0) {
+            outHitLower = bestLower;
+            outDictOffset = bestOffset;
+            outDictSize = bestSize;
+            return true;
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  if (bestPriority < 0) {
+    return false;
+  }
+  outHitLower = bestLower;
+  outDictOffset = bestOffset;
+  outDictSize = bestSize;
+  return true;
+}
+
+bool StarDictLookup::readDefinition(const uint64_t dictOffset, const uint32_t dictSize, std::string& outDefinition,
+                                    bool* outTruncated) {
+  if (dictSize == 0 || !dictFile_.seekSet(dictOffset)) {
+    return false;
+  }
+  const uint32_t readSize = std::min(dictSize, kMaxDefinitionBytes);
+  if (ESP.getMaxAllocHeap() < readSize + kDefinitionHeapHeadroomBytes) {
+    Serial.printf("[%lu] [DICT] Low heap for %u byte definition (maxAlloc=%u)\n", millis(), readSize,
+                  static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    return false;
+  }
+  if (outTruncated) {
+    *outTruncated = readSize < dictSize;
+  }
+  outDefinition.resize(readSize);
+  const int readN = dictFile_.read(&outDefinition[0], readSize);
+  return readN == static_cast<int>(readSize);
+}
+
+bool StarDictLookup::cacheGet(const std::string& keyLower, std::string& outDefinition, bool* outTruncated) {
+  for (size_t i = 0; i < defCache_.size(); ++i) {
+    if (defCache_[i].keyLower == keyLower) {
+      outDefinition = defCache_[i].definition;
+      if (outTruncated) {
+        *outTruncated = defCache_[i].truncated;
+      }
+      // Move to front (MRU).
+      if (i > 0) {
+        DefCacheEntry hit = std::move(defCache_[i]);
+        defCache_.erase(defCache_.begin() + static_cast<std::ptrdiff_t>(i));
+        defCache_.insert(defCache_.begin(), std::move(hit));
+      }
       return true;
     }
-    if (nextOffset <= offset) {
-      break;
-    }
-    offset = nextOffset;
   }
   return false;
+}
+
+void StarDictLookup::cachePut(const std::string& keyLower, const std::string& definition, const bool truncated) {
+  for (size_t i = 0; i < defCache_.size(); ++i) {
+    if (defCache_[i].keyLower == keyLower) {
+      defCache_[i].definition = definition;
+      defCache_[i].truncated = truncated;
+      if (i > 0) {
+        DefCacheEntry hit = std::move(defCache_[i]);
+        defCache_.erase(defCache_.begin() + static_cast<std::ptrdiff_t>(i));
+        defCache_.insert(defCache_.begin(), std::move(hit));
+      }
+      return;
+    }
+  }
+  if (defCache_.size() >= kDefCacheSlots) {
+    defCache_.pop_back();
+  }
+  defCache_.insert(defCache_.begin(), DefCacheEntry{keyLower, definition, truncated});
 }
 
 bool StarDictLookup::lookup(const std::string& queryWord, std::string& outDefinition, bool* outTruncated) {
@@ -404,87 +739,102 @@ bool StarDictLookup::lookup(const std::string& queryWord, std::string& outDefini
     return false;
   }
 
-  const std::string cleaned = stripPunctuation(queryWord);
+  const std::string cleaned = stripSurroundingPunctuation(queryWord);
   if (cleaned.empty()) {
-    Serial.printf("[%lu] [DICT] lookup('%s'): empty after stripPunctuation\n", millis(), queryWord.c_str());
+    Serial.printf("[%lu] [DICT] lookup('%s'): empty after stripSurroundingPunctuation\n", millis(),
+                  queryWord.c_str());
     return false;
   }
 
-  uint64_t dictOffset = 0;
-  uint32_t dictSize = 0;
-  bool found = false;
-
   const std::string lowerCleaned = toLowerCopy(cleaned);
 
-  // Word forms to try, in priority order: the word as typed/cased, then (if the word carries an
-  // inflectional suffix like -s/-ed/-ing/'s) heuristic base forms, so "running"/"books"/"jumped"
-  // can still resolve to "run"/"book"/"jump" when the inflected form isn't its own dictionary entry.
-  std::vector<std::string> candidates = {cleaned, lowerCleaned, toTitleCaseCopy(cleaned)};
+  // Cache is keyed by the cleaned lowercased query (not the stem that eventually hit) so the same
+  // on-screen word always resolves instantly on re-lookup.
+  if (cacheGet(lowerCleaned, outDefinition, outTruncated)) {
+    Serial.printf("[%lu] [DICT] lookup('%s'): cache hit\n", millis(), queryWord.c_str());
+    return true;
+  }
+
+  // Word forms to try, in priority order: as typed, lower, Title; then stems (lower + Title).
+  std::vector<std::string> candidates;
+  candidates.reserve(12);
+  pushUnique(candidates, cleaned);
+  pushUnique(candidates, lowerCleaned);
+  pushUnique(candidates, toTitleCaseCopy(cleaned));
   for (const std::string& stem : stemCandidates(lowerCleaned)) {
-    candidates.push_back(stem);
-    candidates.push_back(toTitleCaseCopy(stem));
+    pushUnique(candidates, stem);
+    pushUnique(candidates, toTitleCaseCopy(stem));
   }
 
   const unsigned long t0 = millis();
+  uint64_t dictOffset = 0;
+  uint32_t dictSize = 0;
+  bool found = false;
   std::string hitCandidate;
-  for (const std::string& candidate : candidates) {
-    if (lookupViaCheckpoints(candidate, dictOffset, dictSize)) {
-      found = true;
-      hitCandidate = candidate;
-      Serial.printf("[%lu] [DICT] lookup('%s'): fast path hit on candidate='%s' (%lums)\n", millis(),
-                    queryWord.c_str(), candidate.c_str(), millis() - t0);
-      break;
+  const bool detectedCi = caseInsensitiveSort_;
+
+  auto tryCandidates = [&]() {
+    for (const std::string& candidate : candidates) {
+      const std::string candidateLower = toLowerCopy(candidate);
+      if (lookupViaSamples(candidate, candidateLower, dictOffset, dictSize)) {
+        found = true;
+        hitCandidate = candidate;
+        return;
+      }
     }
+  };
+
+  tryCandidates();
+  if (!found) {
+    caseInsensitiveSort_ = !detectedCi;
+    tryCandidates();
+    if (found) {
+      Serial.printf("[%lu] [DICT] lookup('%s'): hit after flipping sort order to %s (%lums)\n", millis(),
+                    queryWord.c_str(), caseInsensitiveSort_ ? "case-insensitive" : "byte-order", millis() - t0);
+    } else {
+      caseInsensitiveSort_ = detectedCi;
+    }
+  } else {
+    Serial.printf("[%lu] [DICT] lookup('%s'): fast path hit on candidate='%s' (%lums)\n", millis(),
+                  queryWord.c_str(), hitCandidate.c_str(), millis() - t0);
   }
 
   if (!found) {
-    Serial.printf("[%lu] [DICT] lookup('%s'): fast path missed (%lums), falling back to linear scan over %u "
-                  "idx bytes\n",
+    Serial.printf("[%lu] [DICT] lookup('%s'): fast path missed (%lums), buffered linear scan over %u idx bytes\n",
                   millis(), queryWord.c_str(), millis() - t0, idxFileSize_);
     const unsigned long t1 = millis();
-    // The fast path assumes .idx is sorted in plain byte order (the documented StarDict
-    // convention). Many third-party-generated dictionaries sort case-insensitively instead, which
-    // silently breaks the checkpoint binary search above for every lookup. Fall back to a full
-    // sequential scan, which is correct regardless of the actual on-disk order. Try the same
-    // as-typed-then-stemmed candidate list here too, so the stemming fallback isn't lost for
-    // dictionaries that only work via linear scan.
-    std::vector<std::string> linearCandidates = {lowerCleaned};
-    for (const std::string& stem : stemCandidates(lowerCleaned)) {
-      linearCandidates.push_back(stem);
+    std::vector<std::string> linearCandidates;
+    linearCandidates.reserve(candidates.size());
+    for (const std::string& c : candidates) {
+      pushUnique(linearCandidates, toLowerCopy(c));
     }
-    for (const std::string& candidate : linearCandidates) {
-      if (lookupViaLinearScan(candidate, dictOffset, dictSize)) {
-        found = true;
-        hitCandidate = candidate;
-        break;
-      }
+    std::string hitLower;
+    if (lookupViaLinearScan(linearCandidates, hitLower, dictOffset, dictSize)) {
+      found = true;
+      hitCandidate = hitLower;
     }
     Serial.printf("[%lu] [DICT] lookup('%s'): linear scan %s (%lums)\n", millis(), queryWord.c_str(),
                   found ? "hit" : "miss", millis() - t1);
   }
 
   if (!found) {
+    Serial.printf("[%lu] [DICT] lookup('%s'): not in index (%lums)\n", millis(), queryWord.c_str(), millis() - t0);
     return false;
   }
 
   Serial.printf("[%lu] [DICT] lookup('%s'): matched '%s', dictOffset=%llu dictSize=%u\n", millis(),
                 queryWord.c_str(), hitCandidate.c_str(), static_cast<unsigned long long>(dictOffset), dictSize);
 
-  if (dictSize == 0 || !dictFile_.seekSet(dictOffset)) {
-    Serial.printf("[%lu] [DICT] lookup('%s'): dictSize==0 or seekSet(%llu) failed\n", millis(), queryWord.c_str(),
-                  static_cast<unsigned long long>(dictOffset));
+  bool truncated = false;
+  if (!readDefinition(dictOffset, dictSize, outDefinition, &truncated)) {
+    Serial.printf("[%lu] [DICT] lookup('%s'): definition read failed\n", millis(), queryWord.c_str());
     return false;
   }
-  const uint32_t readSize = std::min(dictSize, kMaxDefinitionBytes);
   if (outTruncated) {
-    *outTruncated = readSize < dictSize;
+    *outTruncated = truncated;
   }
-  outDefinition.resize(readSize);
-  const int readN = dictFile_.read(&outDefinition[0], readSize);
-  if (readN != static_cast<int>(readSize)) {
-    Serial.printf("[%lu] [DICT] lookup('%s'): read %d of %u expected bytes\n", millis(), queryWord.c_str(), readN,
-                  readSize);
-    return false;
-  }
+  cachePut(lowerCleaned, outDefinition, truncated);
+  Serial.printf("[%lu] [DICT] lookup('%s'): total %lums (def %u bytes%s)\n", millis(), queryWord.c_str(),
+                millis() - t0, static_cast<unsigned>(outDefinition.size()), truncated ? ", truncated" : "");
   return true;
 }
