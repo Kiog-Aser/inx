@@ -819,25 +819,33 @@ void MenuDrawer::handlePercentInput(const MappedInputManager& input) {
     return;
   }
 
-  const uint32_t currentTime = xTaskGetTickCount();
-  if (currentTime - lastInputTime < pdMS_TO_TICKS(150)) {
-    return;
-  }
-
   int delta = 0;
-  if (input.isPressed(MappedInputManager::Button::Left)) {
+  if (input.wasPressed(MappedInputManager::Button::Left)) {
     delta = -1;
-  } else if (input.isPressed(MappedInputManager::Button::Right)) {
+  } else if (input.wasPressed(MappedInputManager::Button::Right)) {
     delta = 1;
-  } else if (input.isPressed(MappedInputManager::Button::Up)) {
+  } else if (input.wasPressed(MappedInputManager::Button::Up)) {
     delta = 10;
-  } else if (input.isPressed(MappedInputManager::Button::Down)) {
+  } else if (input.wasPressed(MappedInputManager::Button::Down)) {
     delta = -10;
+  } else if (input.getHeldTime() > 700) {
+    const uint32_t currentTime = xTaskGetTickCount();
+    if (currentTime - lastInputTime >= pdMS_TO_TICKS(150)) {
+      if (input.isPressed(MappedInputManager::Button::Left)) {
+        delta = -1;
+      } else if (input.isPressed(MappedInputManager::Button::Right)) {
+        delta = 1;
+      } else if (input.isPressed(MappedInputManager::Button::Up)) {
+        delta = 10;
+      } else if (input.isPressed(MappedInputManager::Button::Down)) {
+        delta = -10;
+      }
+    }
   }
 
   if (delta != 0) {
     percentValue_ = std::max(0, std::min(100, percentValue_ + delta));
-    lastInputTime = currentTime;
+    lastInputTime = xTaskGetTickCount();
     renderWithRefresh();
   }
 }
