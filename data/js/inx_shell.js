@@ -43,10 +43,10 @@
       body: "Shelf and list views get clearer hierarchy, sharper icons, and status that shows the full book title when you select an item.",
     },
     {
-      id: "import",
-      title: "Faster imports",
+      id: "web-read-search",
+      title: "Read in the browser",
       date: "August 2026",
-      body: "Drag files onto Home or use Import in My files. PDF, JPG, PNG, and EPUB up to 100 MB — EPUB titles come from the book metadata, not the filename.",
+      body: "Open books in a paper-like reader, and drag files into folders from My files.",
     },
   ];
 
@@ -72,17 +72,43 @@
     return String(value || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   }
 
+  function cleanBookTitle(raw) {
+    let value = String(raw || "").replace(/\\/g, "/");
+    value = value.slice(value.lastIndexOf("/") + 1);
+    value = value.replace(/\.[A-Za-z0-9]{1,5}$/, "");
+    value = value.replace(/\s+/g, " ").trim();
+    const cut = value.indexOf(" -- ");
+    if (cut > 0) {
+      const head = value.slice(0, cut).replace(/\s+/g, " ").trim();
+      const lower = head.toLowerCase();
+      const junk =
+        (lower.indexOf("anna") !== -1 && lower.indexOf("archive") !== -1) ||
+        lower.indexOf("isbn") !== -1 ||
+        /^[0-9a-f]{16,}$/i.test(head);
+      if (head && !junk) value = head;
+    }
+    const isbn = value.toLowerCase().indexOf(" isbn");
+    if (isbn > 8) value = value.slice(0, isbn).trim();
+    return value.replace(/[-_.]+$/, "").replace(/\s+/g, " ").trim();
+  }
+
   function displayName(name, isEpub, title) {
-    if (title && String(title).trim()) return String(title).trim();
+    if (title && String(title).trim()) return cleanBookTitle(title);
     if (!name) return "File";
-    if (isEpub) return String(name).replace(/\.epub$/i, "");
+    if (isEpub) return cleanBookTitle(name);
     return String(name);
+  }
+
+  function bookHref(item) {
+    if (item && item.isEpub) return "/read?path=" + encodeURIComponent(item.path || "");
+    return "/download?path=" + encodeURIComponent((item && item.path) || "");
   }
 
   function currentPath() {
     const mount = document.getElementById("inx-shell-mount");
     if (mount && mount.dataset.active) return mount.dataset.active;
     const path = location.pathname.replace(/\/$/, "") || "/";
+    if (path === "/epub-viewer.html") return "/read";
     return path === "" ? "/" : path;
   }
 
@@ -96,11 +122,26 @@
       if (!res.ok) return [];
       const items = await res.json();
       if (!Array.isArray(items)) return [];
-      return items.slice(0, 6).map((item) => ({
-        name: item.title || item.name || item.path || "Book",
+      const seen = {};
+      const unique = [];
+      items.forEach((item) => {
+        const key = String(item.title || item.name || item.path || "")
+          .toLowerCase()
+          .replace(/\.[a-z0-9]{1,5}$/, "");
+        if (!key || seen[key]) return;
+        seen[key] = true;
+        unique.push(item);
+      });
+      return unique.slice(0, 6).map((item) => ({
+        name: cleanBookTitle(item.title || item.name || item.path || "Book"),
         path: item.path || "",
         isEpub: !!item.isEpub,
-        pages: typeof item.progress === "number" && item.progress >= 0 ? Math.round(item.progress * 100) + "%" : undefined,
+        pages:
+          typeof item.progress === "number" && item.progress >= 0.995
+            ? "Finished"
+            : typeof item.progress === "number" && item.progress >= 0
+              ? Math.round(item.progress * 100) + "%"
+              : undefined,
         coverUrl: item.coverUrl || "",
       }));
     } catch (_) {
@@ -130,9 +171,7 @@
       (list.length
         ? list
             .map((item) => {
-              const href = item.isEpub
-                ? "/epub-viewer.html?path=" + encodeURIComponent(item.path || "")
-                : "/download?path=" + encodeURIComponent(item.path || "");
+              const href = bookHref(item);
               return (
                 '<a href="' +
                 href +
@@ -334,9 +373,7 @@
       const html = (recents || []).length
         ? recents
             .map((item) => {
-              const href = item.isEpub
-                ? "/epub-viewer.html?path=" + encodeURIComponent(item.path || "")
-                : "/download?path=" + encodeURIComponent(item.path || "");
+              const href = bookHref(item);
               return (
                 '<a href="' +
                 href +
@@ -381,6 +418,7 @@
   function hydrateExistingSidebar(mountEl, active) {
     const nav = mountEl.querySelector(".inx-side-nav");
     if (!nav || !nav.querySelector("a")) return false;
+    if (!nav.querySelector('a[href="/files"]')) return false;
     nav.querySelectorAll("a").forEach((link) => {
       const href = link.getAttribute("href") || "";
       const isActive = href === active;
@@ -409,5 +447,5 @@
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount);
   else mount();
 
-  window.InxShell = { ICONS, openDrawer, closeDrawer, mount };
+  window.InxShell = { ICONS, openDrawer, closeDrawer, mount, cleanBookTitle, displayName };
 })();

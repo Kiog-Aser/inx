@@ -488,10 +488,15 @@ bool convertToEpub(const std::string& mobiPath, const std::string& outEpubPath) 
   std::string manifestImages;
   for (size_t i = 0; i < images.size(); i++) {
     manifestImages += "<item href=\"" + images[i].entryName + "\" id=\"img" + std::to_string(i) +
-                      "\" media-type=\"" + images[i].mediaType + "\"/>";
+                      "\" media-type=\"" + images[i].mediaType + "\"";
+    if (i == 0) {
+      manifestImages += " properties=\"cover-image\"";
+    }
+    manifestImages += "/>";
   }
   const std::string creator =
       header.author.empty() ? "" : "<dc:creator>" + xmlEscape(header.author) + "</dc:creator>";
+  const std::string coverMeta = images.empty() ? "" : "<meta name=\"cover\" content=\"img0\"/>";
   const std::string opf =
       "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
       "<package xmlns=\"http://www.idpf.org/2007/opf\" unique-identifier=\"BookId\" version=\"3.0\">\n"
@@ -503,6 +508,7 @@ bool convertToEpub(const std::string& mobiPath, const std::string& outEpubPath) 
       xmlEscape(header.title) +
       "</dc:title>" +
       creator +
+      coverMeta +
       "<dc:language>en</dc:language>"
       "</metadata>"
       "<manifest><item href=\"content.html\" id=\"content\" media-type=\"application/xhtml+xml\"/>" +

@@ -75,16 +75,19 @@ class LocalServer {
   void handleQrCreatorLogoJs() const;
   void handleEpubPageJs() const;
   void handleFilesPageJs() const;
+  void handleReaderPageJs() const;
   void handleInxShellJs() const;
   void handleDeviceIdentityJs() const;
   void handleNotFound() const;
   void handleStatus() const;
   void handleRecentBooks() const;
+  void handleCover() const;
   void handleDeviceIdentityGet() const;
   void handleDeviceIdentityPost() const;
   void handleDeviceIdentityPhoto() const;
   void handleDeviceIdentityCardImage() const;
   void handleFileList() const;
+  void handleReaderPage() const;
   void handleEpubPage() const;
   void handleExportPage() const;
   void handleFileListData() const;
@@ -100,6 +103,7 @@ class LocalServer {
   bool deletePathRecursive(const String& itemPath) const;
   bool moveToTrash(const String& itemPath) const;
   void handleRename() const;
+  void handleMove() const;
   void collectEpubRenames(const std::string& oldDirPath, const std::string& newDirPath,
                           std::vector<std::pair<std::string, std::string>>& out) const;
   void migrateEpubBookState(const std::string& oldPath, const std::string& newPath) const;

@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
@@ -42,6 +43,8 @@
 #include "html/DeviceIdentityJs.generated.h"
 #include "html/JsZipMinJs.generated.h"
 #include "html/QrCreatorLogoJs.generated.h"
+#include "html/ReaderPageHtml.generated.h"
+#include "html/ReaderPageJs.generated.h"
 #include "html/SettingsPageHtml.generated.h"
 #include "html/TagsPageHtml.generated.h"
 #include "html/TrashPageHtml.generated.h"
@@ -358,6 +361,38 @@ String jsonEscape(const String& s) {
   return out;
 }
 
+String urlEncodePath(const String& s) {
+  String out;
+  out.reserve(s.length() * 3);
+  for (size_t i = 0; i < s.length(); ++i) {
+    const unsigned char c = static_cast<unsigned char>(s.charAt(i));
+    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+        c == '.' || c == '~' || c == '/') {
+      out += static_cast<char>(c);
+    } else {
+      char buf[4];
+      snprintf(buf, sizeof(buf), "%%%02X", c);
+      out += buf;
+    }
+  }
+  return out;
+}
+
+std::string findWebCoverPath(const std::string& cachePath) {
+  if (cachePath.empty()) {
+    return "";
+  }
+  const char* names[] = {"cover.jpg", "cover.jpeg", "cover.png", "cover_crop.jpg", "thumb.jpg",
+                         "thumb.jpeg", "cover.bmp", "cover_crop.bmp", "thumb.bmp"};
+  for (const char* name : names) {
+    const std::string candidate = cachePath + "/" + name;
+    if (SdMan.exists(candidate.c_str())) {
+      return candidate;
+    }
+  }
+  return "";
+}
+
 bool readExactString(FsFile& file, size_t len, String& out) {
   out = "";
   if (len == 0) {
@@ -456,6 +491,57 @@ std::string epubCachePathForBookPath(const std::string& bookPath) {
   return "/.metadata/epub/" + std::to_string(std::hash<std::string>{}(bookPath));
 }
 
+bool pathHasExtInsensitive(const std::string& path, const char* ext) {
+  const size_t extLen = std::strlen(ext);
+  if (path.size() < extLen) {
+    return false;
+  }
+  for (size_t i = 0; i < extLen; ++i) {
+    const char a = static_cast<char>(std::tolower(static_cast<unsigned char>(path[path.size() - extLen + i])));
+    const char b = static_cast<char>(std::tolower(static_cast<unsigned char>(ext[i])));
+    if (a != b) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::string fileBaseName(const std::string& path) {
+  const size_t slash = path.find_last_of('/');
+  return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
+std::string lowerCopy(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return value;
+}
+
+void collectCoverCacheCandidates(const std::string& bookPath, std::vector<std::string>& out) {
+  auto push = [&out](const std::string& dir) {
+    if (dir.empty()) {
+      return;
+    }
+    if (std::find(out.begin(), out.end(), dir) != out.end()) {
+      return;
+    }
+    out.push_back(dir);
+  };
+
+  push(epubCachePathForBookPath(bookPath));
+  if (pathHasExtInsensitive(bookPath, ".mobi") || pathHasExtInsensitive(bookPath, ".azw") ||
+      pathHasExtInsensitive(bookPath, ".azw3")) {
+    const std::string converted = "/.metadata/mobi/" + std::to_string(std::hash<std::string>{}(bookPath)) + ".epub";
+    push(epubCachePathForBookPath(converted));
+  }
+  if (pathHasExtInsensitive(bookPath, ".txt") || pathHasExtInsensitive(bookPath, ".md")) {
+    push(std::string("/.system/txt_") + std::to_string(std::hash<std::string>{}(bookPath)));
+  }
+  if (pathHasExtInsensitive(bookPath, ".xtc") || pathHasExtInsensitive(bookPath, ".xtch")) {
+    push(std::string("/.metadata/xtc/") + std::to_string(std::hash<std::string>{}(bookPath)));
+  }
+}
+
 std::vector<std::string> epubCacheDirs() {
   std::vector<std::string> out;
   FsFile root = SdMan.open("/.metadata/epub");
@@ -481,6 +567,7 @@ struct ExportBookInfo {
   std::string title;
   std::string author;
   std::string coverPath;
+  std::string path;
 };
 
 ExportBookInfo exportBookInfoForCachePath(const std::string& cachePath) {
@@ -495,17 +582,17 @@ ExportBookInfo exportBookInfoForCachePath(const std::string& cachePath) {
   for (const RecentBook& book : RECENT_BOOKS.getBooks()) {
     const std::string bookCache = book.cachePath.empty() ? epubCachePathForBookPath(book.path) : book.cachePath;
     if (bookCache == cachePath) {
+      info.path = book.path;
       if (info.title.empty()) {
         info.title = book.title;
       }
       if (info.author.empty()) {
         info.author = book.author;
       }
-      if (!info.title.empty()) {
-        break;
+      if (info.title.empty()) {
+        const size_t slash = book.path.find_last_of('/');
+        info.title = slash == std::string::npos ? book.path : book.path.substr(slash + 1);
       }
-      const size_t slash = book.path.find_last_of('/');
-      info.title = slash == std::string::npos ? book.path : book.path.substr(slash + 1);
       break;
     }
   }
@@ -514,10 +601,7 @@ ExportBookInfo exportBookInfoForCachePath(const std::string& cachePath) {
     const size_t slash = cachePath.find_last_of('/');
     info.title = slash == std::string::npos ? cachePath : cachePath.substr(slash + 1);
   }
-  const size_t dot = info.title.find_last_of('.');
-  if (dot != std::string::npos) {
-    info.title.resize(dot);
-  }
+  info.title = BookDisplayTitle::clean(info.title);
   const std::string coverJpeg = cachePath + "/cover.jpg";
   const std::string thumbJpeg = cachePath + "/thumb.jpg";
   const std::string coverBmp = cachePath + "/cover.bmp";
@@ -556,6 +640,8 @@ void writeExportNoteItem(FsFile& file, bool& first, int& total, const char* type
   first = false;
   String row = "{\"type\":\"";
   row += type;
+  row += "\",\"path\":\"";
+  row += jsonEscape(book.path.c_str());
   row += "\",\"book\":\"";
   row += jsonEscape(book.title.c_str());
   row += "\",\"author\":\"";
@@ -749,6 +835,8 @@ void LocalServer::begin() {
   Serial.printf("[%lu] [WEB] Setting up routes...\n", millis());
   server->on("/", HTTP_GET, [this] { handleRoot(); });
   server->on("/files", HTTP_GET, [this] { handleFileList(); });
+  server->on("/read", HTTP_GET, [this] { handleReaderPage(); });
+  server->on("/epub-viewer.html", HTTP_GET, [this] { handleReaderPage(); });
   server->on("/epub", HTTP_GET, [this] { handleEpubPage(); });
   server->on("/export", HTTP_GET, [this] { handleExportPage(); });
   server->on("/font-manager", HTTP_GET, [this] { handleFontManagerPage(); });
@@ -759,11 +847,13 @@ void LocalServer::begin() {
   server->on("/js/qr_creator_logo.min.js", HTTP_GET, [this] { handleQrCreatorLogoJs(); });
   server->on("/js/epub_page.js", HTTP_GET, [this] { handleEpubPageJs(); });
   server->on("/js/files_page.js", HTTP_GET, [this] { handleFilesPageJs(); });
+  server->on("/js/reader_page.js", HTTP_GET, [this] { handleReaderPageJs(); });
   server->on("/js/inx_shell.js", HTTP_GET, [this] { handleInxShellJs(); });
   server->on("/js/device_identity.js", HTTP_GET, [this] { handleDeviceIdentityJs(); });
 
   server->on("/api/status", HTTP_GET, [this] { handleStatus(); });
   server->on("/api/recent-books", HTTP_GET, [this] { handleRecentBooks(); });
+  server->on("/api/cover", HTTP_GET, [this] { handleCover(); });
   server->on("/api/device-identity", HTTP_GET, [this] { handleDeviceIdentityGet(); });
   server->on("/api/device-identity", HTTP_POST, [this] { handleDeviceIdentityPost(); });
   server->on("/api/device-identity/photo", HTTP_GET, [this] { handleDeviceIdentityPhoto(); });
@@ -785,6 +875,7 @@ void LocalServer::begin() {
   server->on("/api/trash/restore", HTTP_POST, [this] { handleTrashRestore(); });
 
   server->on("/rename", HTTP_POST, [this] { handleRename(); });
+  server->on("/move", HTTP_POST, [this] { handleMove(); });
 
   server->on("/settings", HTTP_GET, [this] { handleSettingsPage(); });
   server->on("/api/settings", HTTP_GET, [this] { handleSettingsGet(); });
@@ -808,6 +899,7 @@ void LocalServer::begin() {
   Serial.printf("✓ jszip.min.js from firmware flash (%u bytes)\n", static_cast<unsigned>(sizeof(JSZIP_MIN_JS) - 1));
   Serial.printf("✓ epub_page.js from firmware flash (%u bytes)\n", static_cast<unsigned>(sizeof(EPUB_PAGE_JS) - 1));
   Serial.printf("✓ files_page.js from firmware flash (%u bytes)\n", static_cast<unsigned>(sizeof(FILES_PAGE_JS) - 1));
+  Serial.printf("✓ reader_page.js from firmware flash (%u bytes)\n", static_cast<unsigned>(sizeof(READER_PAGE_JS) - 1));
   Serial.printf("✓ inx_shell.js from firmware flash (%u bytes)\n", static_cast<unsigned>(sizeof(INX_SHELL_JS) - 1));
   Serial.printf("✓ device_identity.js from firmware flash (%u bytes)\n",
                 static_cast<unsigned>(sizeof(DEVICE_IDENTITY_JS) - 1));
@@ -974,27 +1066,33 @@ void LocalServer::handleRecentBooks() const {
   RECENT_BOOKS.loadFromFile();
   const auto& books = RECENT_BOOKS.getBooks();
   bool first = true;
-  const size_t limit = std::min<size_t>(books.size(), 8);
-  for (size_t i = 0; i < limit; ++i) {
+  size_t emitted = 0;
+  std::set<std::string> seenTitles;
+  for (size_t i = 0; i < books.size() && emitted < 8; ++i) {
     const RecentBook& book = books[i];
     if (book.path.empty()) {
       continue;
     }
     const std::string cachePath = book.cachePath.empty() ? epubCachePathForBookPath(book.path) : book.cachePath;
-    const char* coverNames[] = {"cover.jpg", "cover.png", "cover.bmp", "cover_crop.jpg", "cover_crop.bmp", "thumb.jpg"};
-    std::string coverPath;
-    for (const char* name : coverNames) {
-      const std::string candidate = cachePath + "/" + name;
-      if (SdMan.exists(candidate.c_str())) {
-        coverPath = candidate;
-        break;
-      }
-    }
 
     const size_t slash = book.path.find_last_of('/');
     const std::string fileName = slash == std::string::npos ? book.path : book.path.substr(slash + 1);
     const bool isEpub = isEpubFile(String(fileName.c_str()));
-    const std::string title = !book.title.empty() ? book.title : fileName;
+    const std::string title = BookDisplayTitle::resolve(book.path, book.title.empty() ? fileName : book.title);
+    const std::string titleKey = lowerCopy(title);
+    if (!titleKey.empty() && seenTitles.count(titleKey)) {
+      continue;
+    }
+    if (!titleKey.empty()) {
+      seenTitles.insert(titleKey);
+    }
+    float progress = book.progress;
+#ifndef INX_SIMULATOR_WEB_ONLY
+    BookState::Book state;
+    if ((progress >= 0.995f) || (BOOK_STATE.findBook(book.path, state) && state.isFinished)) {
+      progress = 1.0f;
+    }
+#endif
 
     if (!first) {
       json += ",";
@@ -1011,23 +1109,100 @@ void LocalServer::handleRecentBooks() const {
     json += "\",\"isEpub\":";
     json += isEpub ? "true" : "false";
     json += ",\"progress\":";
-    if (book.progress >= 0.0f) {
-      json += String(book.progress, 3);
+    if (progress >= 0.0f) {
+      json += String(progress, 3);
     } else {
       json += "null";
     }
     json += ",\"coverUrl\":\"";
-    if (!coverPath.empty()) {
-      String coverUrl = "/download?path=";
-      coverUrl += coverPath.c_str();
-      coverUrl += "&inline=1";
+    if (!book.path.empty()) {
+      String coverUrl = "/api/cover?path=";
+      coverUrl += urlEncodePath(String(book.path.c_str()));
       json += jsonEscape(coverUrl);
     }
     json += "\"}";
+    ++emitted;
   }
 #endif
   json += "]";
   server->send(200, "application/json", json);
+}
+
+void LocalServer::handleCover() const {
+  if (!server->hasArg("path")) {
+    server->send(400, "text/plain", "Missing path");
+    return;
+  }
+  String bookPath = server->arg("path");
+  if (bookPath.isEmpty()) {
+    server->send(400, "text/plain", "Invalid path");
+    return;
+  }
+  if (!bookPath.startsWith("/")) {
+    bookPath = "/" + bookPath;
+  }
+
+#ifndef INX_SIMULATOR_WEB_ONLY
+  RECENT_BOOKS.loadFromFile();
+  std::vector<std::string> cacheCandidates;
+  const std::string requested = std::string(bookPath.c_str());
+  const std::string requestedBase = lowerCopy(fileBaseName(requested));
+  const auto& books = RECENT_BOOKS.getBooks();
+  for (const auto& book : books) {
+    if (book.path == requested) {
+      cacheCandidates.push_back(book.cachePath.empty() ? epubCachePathForBookPath(book.path) : book.cachePath);
+    } else if (!requestedBase.empty() && lowerCopy(fileBaseName(book.path)) == requestedBase) {
+      cacheCandidates.push_back(book.cachePath.empty() ? epubCachePathForBookPath(book.path) : book.cachePath);
+    }
+  }
+  collectCoverCacheCandidates(requested, cacheCandidates);
+
+  std::string coverPath;
+  for (const std::string& cacheDir : cacheCandidates) {
+    coverPath = findWebCoverPath(cacheDir);
+    if (!coverPath.empty() && SdMan.exists(coverPath.c_str())) {
+      break;
+    }
+    coverPath.clear();
+  }
+  if (coverPath.empty()) {
+    server->send(404, "text/plain", "Cover not found");
+    return;
+  }
+
+  FsFile file = SdMan.open(coverPath.c_str());
+  if (!file) {
+    server->send(500, "text/plain", "Failed to open cover");
+    return;
+  }
+  if (file.isDirectory()) {
+    file.close();
+    server->send(400, "text/plain", "Path is a directory");
+    return;
+  }
+
+  String contentType = "application/octet-stream";
+  const String pathStr = coverPath.c_str();
+  if (pathStr.endsWith(".jpg") || pathStr.endsWith(".jpeg") || pathStr.endsWith(".JPG") ||
+      pathStr.endsWith(".JPEG")) {
+    contentType = "image/jpeg";
+  } else if (pathStr.endsWith(".png") || pathStr.endsWith(".PNG")) {
+    contentType = "image/png";
+  } else if (pathStr.endsWith(".bmp") || pathStr.endsWith(".BMP")) {
+    contentType = "image/bmp";
+  }
+
+  server->setContentLength(file.size());
+  server->sendHeader("Content-Disposition", "inline");
+  server->sendHeader("Cache-Control", "public, max-age=86400");
+  server->send(200, contentType.c_str(), "");
+  WiFiClient client = server->client();
+  client.write(file);
+  file.close();
+#else
+  (void)bookPath;
+  server->send(404, "text/plain", "Cover not found");
+#endif
 }
 
 void LocalServer::handleDeviceIdentityGet() const {
@@ -1164,7 +1339,7 @@ void LocalServer::scanFiles(const char* path, const std::function<void(FileInfo)
             bookPath += "/";
             bookPath += name;
           }
-          const std::string title = BookDisplayTitle::lookup(bookPath);
+          const std::string title = BookDisplayTitle::resolve(bookPath, name);
           if (!title.empty()) {
             info.title = title.c_str();
           }
@@ -1191,6 +1366,10 @@ bool LocalServer::isEpubFile(const String& filename) const {
 }
 
 void LocalServer::handleFileList() const { server->send(200, "text/html", FilesPageHtml); }
+
+void LocalServer::handleReaderPage() const {
+  server->send_P(200, PSTR("text/html; charset=utf-8"), ReaderPageHtml, sizeof(ReaderPageHtml) - 1);
+}
 
 void LocalServer::handleEpubPage() const {
   server->send_P(200, PSTR("text/html; charset=utf-8"), EpubPageHtml, sizeof(EpubPageHtml) - 1);
@@ -1224,6 +1403,10 @@ void LocalServer::handleEpubPageJs() const {
 
 void LocalServer::handleFilesPageJs() const {
   server->send_P(200, PSTR("text/javascript; charset=utf-8"), FILES_PAGE_JS, sizeof(FILES_PAGE_JS) - 1);
+}
+
+void LocalServer::handleReaderPageJs() const {
+  server->send_P(200, PSTR("text/javascript; charset=utf-8"), READER_PAGE_JS, sizeof(READER_PAGE_JS) - 1);
 }
 
 void LocalServer::handleInxShellJs() const {
@@ -2147,6 +2330,105 @@ void LocalServer::handleRename() const {
 
   Serial.printf("[%lu] [WEB] Successfully renamed: %s -> %s\n", millis(), itemPath.c_str(), newPath.c_str());
   server->send(200, "text/plain", "Renamed successfully");
+}
+
+void LocalServer::handleMove() const {
+  if (!server->hasArg("path") || !server->hasArg("dest")) {
+    server->send(400, "text/plain", "Missing path or dest");
+    return;
+  }
+
+  String itemPath = server->arg("path");
+  String destPath = server->arg("dest");
+  auto normalize = [](String value) {
+    value.trim();
+    if (value.isEmpty()) {
+      return String("/");
+    }
+    if (!value.startsWith("/")) {
+      value = "/" + value;
+    }
+    while (value.length() > 1 && value.endsWith("/")) {
+      value = value.substring(0, value.length() - 1);
+    }
+    return value;
+  };
+  itemPath = normalize(itemPath);
+  destPath = normalize(destPath);
+
+  if (itemPath == "/") {
+    server->send(400, "text/plain", "Cannot move root directory");
+    return;
+  }
+  if (destPath == itemPath || destPath.startsWith(itemPath + "/")) {
+    server->send(400, "text/plain", "Cannot move a folder into itself");
+    return;
+  }
+
+  const String itemName = itemPath.substring(itemPath.lastIndexOf('/') + 1);
+  if (itemName.startsWith(".")) {
+    server->send(403, "text/plain", "Cannot move system files");
+    return;
+  }
+  for (size_t i = 0; i < HIDDEN_ITEMS_COUNT; i++) {
+    if (itemName.equals(HIDDEN_ITEMS[i]) || destPath.equals(String("/") + HIDDEN_ITEMS[i])) {
+      server->send(403, "text/plain", "Cannot move protected items");
+      return;
+    }
+  }
+
+  if (!SdMan.exists(itemPath.c_str())) {
+    server->send(404, "text/plain", "Item not found");
+    return;
+  }
+  if (destPath != "/" && !SdMan.exists(destPath.c_str())) {
+    server->send(404, "text/plain", "Destination not found");
+    return;
+  }
+  if (destPath != "/") {
+    FsFile dest = SdMan.open(destPath.c_str());
+    const bool destIsDir = dest && dest.isDirectory();
+    if (dest) {
+      dest.close();
+    }
+    if (!destIsDir) {
+      server->send(400, "text/plain", "Destination must be a folder");
+      return;
+    }
+  }
+
+  const String newPath = (destPath == "/" ? String("") : destPath) + "/" + itemName;
+  if (newPath == itemPath) {
+    server->send(200, "text/plain", "Moved successfully");
+    return;
+  }
+  if (SdMan.exists(newPath.c_str())) {
+    server->send(409, "text/plain", "An item with that name already exists");
+    return;
+  }
+
+  FsFile item = SdMan.open(itemPath.c_str());
+  const bool isDir = item && item.isDirectory();
+  if (item) {
+    item.close();
+  }
+
+  std::vector<std::pair<std::string, std::string>> epubRenames;
+  if (isDir) {
+    collectEpubRenames(itemPath.c_str(), newPath.c_str(), epubRenames);
+  } else if (isEpubFile(itemName)) {
+    epubRenames.emplace_back(itemPath.c_str(), newPath.c_str());
+  }
+
+  Serial.printf("[%lu] [WEB] Moving %s -> %s\n", millis(), itemPath.c_str(), newPath.c_str());
+  if (!SdMan.rename(itemPath.c_str(), newPath.c_str())) {
+    server->send(500, "text/plain", "Failed to move item");
+    return;
+  }
+  for (const auto& renamePair : epubRenames) {
+    migrateEpubBookState(renamePair.first, renamePair.second);
+  }
+  server->send(200, "text/plain", "Moved successfully");
 }
 
 void LocalServer::wsEventCallback(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {

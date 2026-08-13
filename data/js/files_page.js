@@ -62,7 +62,7 @@ function formatFileSize(bytes) {
 function formatBreadcrumb(path) {
   if (!path || path === "/") return "";
   const parts = path.replace(/\/$/, "").split("/").filter(Boolean);
-  let html = '<a href="/files">My files</a>';
+  let html = '<a href="/files" data-drop-path="/">My files</a>';
   let accumulated = "";
   parts.forEach((part, index) => {
     accumulated += "/" + part;
@@ -70,13 +70,138 @@ function formatBreadcrumb(path) {
     html +=
       index === parts.length - 1
         ? '<span class="current">' + escapeHtml(part) + "</span>"
-        : '<a href="/files?path=' + encodeURIComponent(accumulated) + '">' + escapeHtml(part) + "</a>";
+        : '<a href="/files?path=' +
+          encodeURIComponent(accumulated) +
+          '" data-drop-path="' +
+          escapeAttr(accumulated) +
+          '">' +
+          escapeHtml(part) +
+          "</a>";
   });
   return html;
 }
 
 function validName(name) {
   return /^(?!\.{1,2}$)[^"*:<>?\\/|]+$/.test(name);
+}
+
+function sanitizeUploadName(name) {
+  let next = String(name || "")
+    .replace(/["*:<>?\\/|]/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/[. ]+$/g, "")
+    .trim();
+  while (next.charAt(0) === ".") {
+    next = next.slice(1).trim();
+  }
+  return next;
+}
+
+async function maybeRenameUploadedEpub(file, destination) {
+  if (!file || !/\.epub$/i.test(file.name) || typeof JSZip === "undefined") return;
+  try {
+    const zip = await JSZip.loadAsync(file);
+    const container = zip.file("META-INF/container.xml");
+    if (!container) return;
+    const containerXml = await container.async("string");
+    const opfMatch = containerXml.match(/full-path=["']([^"']+)["']/i);
+    if (!opfMatch) return;
+    const opfFile = zip.file(opfMatch[1]);
+    if (!opfFile) return;
+    const opf = await opfFile.async("string");
+    const titleMatch = opf.match(/<dc:title[^>]*>([^<]+)<\/dc:title>/i);
+    if (!titleMatch) return;
+    const clean = window.InxShell && window.InxShell.cleanBookTitle;
+    const title = sanitizeUploadName(clean ? clean(titleMatch[1]) : titleMatch[1]);
+    if (!title || !validName(title)) return;
+    const current = file.name.replace(/\.epub$/i, "");
+    if (title.toLowerCase() === current.toLowerCase()) return;
+    const src = joinPath(destination, file.name);
+    for (let n = 0; n < 6; n++) {
+      const nextName = n === 0 ? title + ".epub" : title + " (" + (n + 1) + ").epub";
+      if (!validName(nextName)) return;
+      const form = new FormData();
+      form.append("path", src);
+      form.append("name", nextName);
+      const response = await fetch("/rename", { method: "POST", body: form });
+      if (response.ok) return;
+      if (response.status !== 409) return;
+    }
+  } catch (_) {}
+}
+
+async function moveLibraryItem(path, dest) {
+  if (!path || !dest || path === dest) return;
+  const parent = path.replace(/\/[^/]+$/, "") || "/";
+  if (parent === dest) return;
+  const form = new FormData();
+  form.append("path", path);
+  form.append("dest", dest);
+  const response = await fetch("/move", { method: "POST", body: form });
+  if (!response.ok) throw new Error((await response.text()) || "Unable to move item");
+  showToast("Moved");
+  await hydrate();
+}
+
+const INX_PATH_TYPE = "application/x-inx-path";
+
+function isInternalDrag(event) {
+  const types = event.dataTransfer && event.dataTransfer.types;
+  if (!types) return false;
+  return Array.from(types).includes(INX_PATH_TYPE);
+}
+
+function dropDestinationFrom(target) {
+  const crumb = target && target.closest ? target.closest("[data-drop-path]") : null;
+  if (crumb && crumb.dataset.dropPath) {
+    return { el: crumb, path: crumb.dataset.dropPath };
+  }
+  return null;
+}
+
+function clearDropTargets() {
+  document.querySelectorAll(".drop-target,.is-dragging").forEach((el) => {
+    el.classList.remove("drop-target", "is-dragging");
+  });
+}
+
+function bindLibraryDrag() {
+  if (window.__inxFilesDragBound) return;
+  window.__inxFilesDragBound = true;
+  document.addEventListener("dragstart", (event) => {
+    const row = event.target.closest && event.target.closest(".file-row");
+    if (!row || !row.dataset.path) return;
+    event.dataTransfer.setData(INX_PATH_TYPE, row.dataset.path);
+    event.dataTransfer.setData("text/plain", row.dataset.path);
+    event.dataTransfer.effectAllowed = "move";
+    row.classList.add("is-dragging");
+  });
+  document.addEventListener("dragend", clearDropTargets);
+  document.addEventListener("dragover", (event) => {
+    if (!isInternalDrag(event)) return;
+    const dest = dropDestinationFrom(event.target);
+    if (!dest) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    document.querySelectorAll(".drop-target").forEach((el) => {
+      if (el !== dest.el) el.classList.remove("drop-target");
+    });
+    dest.el.classList.add("drop-target");
+  });
+  document.addEventListener("drop", async (event) => {
+    if (!isInternalDrag(event)) return;
+    const dest = dropDestinationFrom(event.target);
+    const src = event.dataTransfer.getData(INX_PATH_TYPE) || event.dataTransfer.getData("text/plain");
+    clearDropTargets();
+    if (!dest || !src) return;
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      await moveLibraryItem(src, dest.path);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
 }
 
 function showToast(message, error) {
@@ -128,6 +253,7 @@ async function uploadFiles(files, destination) {
     setUploadStatus("Uploading " + file.name, index + 1 + "/" + files.length, (index / files.length) * 100, true);
     try {
       await uploadBlobToPath(file, file.name, destination);
+      await maybeRenameUploadedEpub(file, destination);
       completed++;
     } catch (error) {
       failures.push(file.name + ": " + error.message);
@@ -421,9 +547,10 @@ async function uploadCovers() {
 }
 
 function displayName(name, isEpub, title) {
-  if (title && String(title).trim()) return String(title).trim();
+  const clean = window.InxShell && window.InxShell.cleanBookTitle;
+  if (title && String(title).trim()) return clean ? clean(title) : String(title).trim();
   if (!name) return "";
-  if (isEpub) return String(name).replace(/\.epub$/i, "");
+  if (isEpub) return clean ? clean(name) : String(name).replace(/\.epub$/i, "");
   return String(name);
 }
 
@@ -629,7 +756,11 @@ async function hydrate() {
       html +=
         '<div class="file-row' +
         (item.isDirectory ? " is-folder" : "") +
-        '">' +
+        '" draggable="true" data-path="' +
+        pathAttr +
+        '"' +
+        (item.isDirectory ? ' data-drop-path="' + pathAttr + '"' : "") +
+        ">" +
         '<input class="select-box" type="checkbox" data-path="' +
         pathAttr +
         '" data-name="' +
@@ -651,7 +782,7 @@ async function hydrate() {
           '<span class="meta">Folder</span></a>';
       } else {
         const destination = isEpub
-          ? "/epub-viewer.html?path=" + encodeURIComponent(path)
+          ? "/read?path=" + encodeURIComponent(path)
           : "/download?path=" + encodeURIComponent(path);
         html +=
           '<a class="row-main file-link" data-path="' +
@@ -752,6 +883,7 @@ function initDropzone() {
   }
 
   const hasFiles = (event) => {
+    if (isInternalDrag(event)) return false;
     const types = event.dataTransfer && event.dataTransfer.types;
     if (!types) return false;
     return Array.from(types).includes("Files");
@@ -852,6 +984,7 @@ function init() {
     openModal("delete-modal");
   });
   hydrate();
+  bindLibraryDrag();
 }
 
 document.readyState === "loading" ? document.addEventListener("DOMContentLoaded", init) : init();

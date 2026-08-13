@@ -320,6 +320,7 @@ def inject_shell_script(html: str) -> str:
 def detect_active_path(html: str, filename: str = "") -> str:
     mapping = {
         "HomePage.html": "/",
+        "ReaderPage.html": "/read",
         "FilesPage.html": "/files",
         "TagsPage.html": "/tags",
         "FontManagerPage.html": "/font-manager",
