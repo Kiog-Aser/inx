@@ -67,6 +67,10 @@
       padding:0 8px;border-bottom:1px solid transparent;
     }
     .file-row:hover{background:var(--active)}
+    .file-row.is-dragging{opacity:.45}
+    .file-row.drop-target,.breadcrumb a.drop-target{
+      background:var(--active);outline:2px solid var(--blue);outline-offset:-2px;
+    }
     .select-box{display:none}
     .row-main{min-width:0;display:flex;align-items:center;gap:12px;color:var(--ink);text-decoration:none}
     .row-main .icon{width:22px;height:22px;flex:0 0 auto}
@@ -427,6 +431,7 @@ body.inx-shared .summary{color:var(--muted)!important}
   <div class="modal-overlay" id="delete-modal" role="dialog" aria-labelledby="delete-title" aria-modal="true"><div class="modal"><div class="modal-header"><h2 id="delete-title">Move to Trash</h2><button class="icon-btn modal-close" type="button" aria-label="Close">×</button></div><p class="modal-copy" id="delete-copy"></p><div class="field-error" id="delete-error"></div><div class="modal-actions"><button class="modal-btn secondary modal-cancel" type="button">Cancel</button><button class="modal-btn danger" type="button" id="delete-submit">Move to Trash</button></div></div></div>
   <div class="modal-overlay" id="cover-modal" role="dialog" aria-labelledby="cover-title" aria-modal="true"><div class="modal"><div class="modal-header"><h2 id="cover-title">Upload cover art</h2><button class="icon-btn modal-close" type="button" aria-label="Close">×</button></div><p class="modal-copy">Images are resized for the display, converted to JPEG, and saved in <strong>/sleep</strong>.</p><input id="cover-input" class="file-input" accept="image/*,.bmp" multiple type="file"><div class="cover-options">Maximum 480 × 800 · JPEG quality 100%</div><div class="field-error" id="cover-error"></div><div class="modal-actions"><button class="modal-btn secondary modal-cancel" type="button">Cancel</button><button class="modal-btn primary" type="button" id="cover-submit">Upload</button></div></div></div>
   <div class="toast" id="toast" role="status"></div>
+  <script defer src="/js/jszip.min.js"></script>
   <script defer src="/js/files_page.js"></script>
 <script src="/js/inx_shell.js?v=1786028666"></script></body>
 </html>

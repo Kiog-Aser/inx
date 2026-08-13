@@ -355,24 +355,19 @@ body.inx-shared .summary{color:var(--muted)!important}
   function showToast(t,isError){const e=document.getElementById("toast");e.textContent=t;e.style.background=isError?"#8e332d":"#242321";e.classList.add("show");setTimeout(()=>e.classList.remove("show"),2800)}
   function escapeHtml(t){return String(t||"").replace(/[&<>]/g,e=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[e]))}
   function coverCandidates(item){
-    const path=item.path||"";
-    const folder=path.replace(/\/[^/]+$/,"")||"/";
-    const base=(item.name||path).replace(/\.[^.]+$/,"");
     const list=[];
-    if(item.coverUrl)list.push(item.coverUrl);
-    if(item.isEpub){
-      list.push("/download?path="+encodeURIComponent(folder+"/.metadata/"+base+"/cover.jpg")+"&inline=1");
-    }
-    list.push("/download?path="+encodeURIComponent(folder+"/thumb.jpg")+"&inline=1");
-    list.push("/download?path="+encodeURIComponent("/sleep/"+base+".jpg")+"&inline=1");
+    if(item&&item.path)list.push("/api/cover?path="+encodeURIComponent(item.path));
+    if(item&&item.coverUrl&&item.coverUrl.indexOf("/api/cover?path=")<0)list.push(item.coverUrl);
     return list;
   }
   function displayName(item){
-    if(item&&item.title)return item.title;
-    const name=item&&(item.name||item.path)||"File";
-    return item&&item.isEpub?String(name).replace(/\.epub$/i,""):String(name);
+    const raw=item&&(item.title||item.name||item.path)||"File";
+    if(window.InxShell&&window.InxShell.cleanBookTitle)return window.InxShell.cleanBookTitle(raw);
+    if(item&&item.isEpub)return String(raw).replace(/\.epub$/i,"");
+    return String(raw);
   }
   function recentSubtitle(item){
+    if(item&&typeof item.progress==="number"&&item.progress>=0.995)return "Finished";
     if(item&&typeof item.progress==="number"&&item.progress>=0)return Math.round(item.progress*100)+"%";
     if(item&&item.author)return item.author;
     if(item&&item.pages)return item.pages+" pages";
@@ -380,16 +375,16 @@ body.inx-shared .summary{color:var(--muted)!important}
     return "—";
   }
   function recentCard(item){
-    const href=item.isEpub?"/epub-viewer.html?path="+encodeURIComponent(item.path||""):"/download?path="+encodeURIComponent(item.path||"");
+    const href=item.isEpub?"/read?path="+encodeURIComponent(item.path||""):"/download?path="+encodeURIComponent(item.path||"");
     const title=displayName(item);
     const pages=recentSubtitle(item);
     const covers=coverCandidates(item);
-    return '<a class="recent-card" href="'+href+'"><div class="recent-cover" data-covers="'+escapeHtml(JSON.stringify(covers))+'"><div class="fallback"><strong>'+escapeHtml(title)+'</strong></div></div><div class="recent-meta"><div class="name">'+escapeHtml(title)+'</div><div class="pages">'+escapeHtml(pages)+'</div></div></a>';
+    return '<a class="recent-card" href="'+href+'"><div class="recent-cover" data-covers="'+encodeURIComponent(JSON.stringify(covers))+'"><div class="fallback"><strong>'+escapeHtml(title)+'</strong></div></div><div class="recent-meta"><div class="name">'+escapeHtml(title)+'</div><div class="pages">'+escapeHtml(pages)+'</div></div></a>';
   }
   function hydrateCovers(root){
     root.querySelectorAll(".recent-cover[data-covers]").forEach(function(box){
       let urls=[];
-      try{urls=JSON.parse(box.getAttribute("data-covers")||"[]")}catch(e){}
+      try{urls=JSON.parse(decodeURIComponent(box.getAttribute("data-covers")||"%5B%5D"))}catch(e){}
       let i=0;
       function tryNext(){
         if(i>=urls.length)return;

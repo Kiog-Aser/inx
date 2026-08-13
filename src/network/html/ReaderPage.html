@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Inx — Read</title>
+  <style>
+    body.inx-app .inx-main{padding:0;display:flex;flex-direction:column;min-height:100vh;background:#efece6}
+    .reader-chrome{
+      display:flex;align-items:flex-end;padding:18px 22px 0;background:transparent;
+    }
+    .reader-tab-wrap{position:relative;max-width:min(720px,100%)}
+    .reader-tab{
+      display:inline-flex;align-items:center;gap:8px;max-width:min(520px,70vw);
+      padding:9px 8px 10px 16px;background:#fffcf7;border:1px solid #e4e0d7;border-bottom:0;
+      border-radius:12px 12px 0 0;font:600 14px/1.2 var(--font-sans);color:var(--ink);
+      box-shadow:0 -1px 0 #fffcf7 inset;
+    }
+    .reader-tab span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default}
+    .reader-tab-close{
+      flex:0 0 auto;width:22px;height:22px;margin-left:2px;border-radius:6px;
+      display:inline-flex;align-items:center;justify-content:center;
+      color:#6b6660;text-decoration:none;font:500 15px/1 var(--font-sans);
+    }
+    .reader-tab-close:hover{background:#ece8e0;color:var(--ink)}
+    .reader-stage{flex:1;display:flex;justify-content:center;padding:0 18px 48px}
+    .reader-paper{
+      width:min(720px,100%);background:#fffcf7;border:1px solid #e4e0d7;border-top:0;
+      box-shadow:0 10px 30px #24232114;min-height:calc(100vh - 88px);padding:8px 56px 72px;color:#2b2926;
+      font:400 20px/1.7 var(--font-serif);
+    }
+    .reader-paper section{
+      min-height:calc(100vh - 140px);padding:40px 0 64px;border-bottom:1px solid #e4e0d7;
+      page-break-after:always;break-after:page;
+    }
+    .reader-paper section:last-child{border-bottom:0;min-height:0}
+    .reader-paper h1,.reader-paper h2,.reader-paper h3{font-family:var(--font-serif);letter-spacing:-.02em;line-height:1.25;margin:1.4em 0 .6em}
+    .reader-paper p{margin:0 0 1em}
+    .reader-paper img{max-width:100%;height:auto}
+    .reader-paper mark{
+      background:rgba(255,159,71,.38);color:inherit;padding:0 .08em;
+    }
+    .reader-empty{padding:80px 20px;text-align:center;color:var(--muted);font:400 16px/1.5 var(--font-sans)}
+    .reader-toc{
+      position:absolute;left:0;top:calc(100% - 1px);width:min(280px,70vw);max-height:min(420px,60vh);
+      overflow:auto;background:#fffcf7;border:1px solid #e4e0d7;padding:10px 8px;display:none;z-index:20;
+      box-shadow:0 10px 24px #24232118;
+    }
+    .reader-tab-wrap:hover .reader-toc.has-items,
+    .reader-toc.is-open{display:block}
+    .reader-toc a{display:block;padding:7px 8px;text-decoration:none;color:var(--ink);font:400 13px/1.35 var(--font-sans)}
+    .reader-toc a:hover{background:#f3efe7}
+    @media(max-width:900px){
+      .reader-paper{padding:20px 22px 48px;font-size:18px}
+      .reader-toc{width:min(280px,calc(100vw - 48px))}
+    }
+  </style>
+</head>
+<body class="inx-app">
+  <div class="inx-app-shell">
+    <aside id="inx-shell-mount" class="inx-sidebar" data-active="/read"></aside>
+    <main class="inx-main">
+      <div class="reader-chrome">
+        <div class="reader-tab-wrap" id="reader-tab-wrap">
+          <div class="reader-tab" id="reader-tab">
+            <span>Open a book</span>
+            <a href="/" class="reader-tab-close" aria-label="Close document" title="Close document">×</a>
+          </div>
+          <nav class="reader-toc" id="reader-toc" aria-label="Table of contents"></nav>
+        </div>
+      </div>
+      <div class="reader-stage">
+        <article class="reader-paper" id="reader-paper">
+          <div class="reader-empty">Choose a book from Home or My files.</div>
+        </article>
+      </div>
+    </main>
+  </div>
+  <script src="/js/jszip.min.js"></script>
+  <script src="/js/reader_page.js"></script>
+  <script src="/js/inx_shell.js"></script>
+</body>
+</html>
