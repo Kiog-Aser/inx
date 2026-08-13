@@ -7,6 +7,8 @@
 #include <cctype>
 #include <cstring>
 
+#include <esp_task_wdt.h>
+
 #include "util/StringUtils.h"
 
 namespace {
@@ -25,20 +27,13 @@ std::string toTitleCaseCopy(const std::string& s) {
   return out;
 }
 
-/** Strips leading/trailing characters that aren't letters/digits/apostrophe/hyphen, so a word
- *  lifted straight from rendered book text (with trailing commas/periods/quotes) can still match
- *  a dictionary entry. */
-std::string stripPunctuation(const std::string& s) {
-  size_t start = 0;
-  size_t end = s.size();
-  auto keep = [](unsigned char c) { return std::isalnum(c) || c == '\'' || c == '-'; };
-  while (start < end && !keep(static_cast<unsigned char>(s[start]))) {
-    ++start;
-  }
-  while (end > start && !keep(static_cast<unsigned char>(s[end - 1]))) {
-    --end;
-  }
-  return s.substr(start, end - start);
+bool isWordByte(const unsigned char c) {
+  return c >= 0x80 || std::isalnum(c) != 0 || c == '\'' || c == '-';
+}
+
+/** UTF-8 General Punctuation U+2000–U+206F (curly quotes, dashes) is E2 80/81 xx. */
+bool isGeneralPunctuationAt(const unsigned char* b, const size_t i, const size_t end) {
+  return i + 2 < end && b[i] == 0xE2 && (b[i + 1] == 0x80 || b[i + 1] == 0x81);
 }
 
 /** Generates candidate base forms for a possibly-inflected English word (possessive, plural,
@@ -57,6 +52,9 @@ std::vector<std::string> stemCandidates(const std::string& lower) {
 
   if (n > 2 && lower[n - 2] == '\'' && lower[n - 1] == 's') {
     add(lower.substr(0, n - 2));
+  }
+  if (n > 4 && lower.compare(n - 4, 4, "\xE2\x80\x99s") == 0) {
+    add(lower.substr(0, n - 4));
   }
 
   if (n > 4 && lower.compare(n - 3, 3, "ing") == 0) {
@@ -104,6 +102,20 @@ void pushUnique(std::vector<std::string>& list, const std::string& s) {
     list.push_back(s);
   }
 }
+
+bool writeLe32(FsFile& file, const uint32_t value) {
+  return file.write(reinterpret_cast<const uint8_t*>(&value), 4) == 4;
+}
+
+bool readLe32(FsFile& file, uint32_t& value) {
+  return file.read(reinterpret_cast<uint8_t*>(&value), 4) == 4;
+}
+
+// Same layout as CrossPoint 1.5 .qidx, plus a flags word (version 2) for sort-order.
+constexpr uint32_t kQidxMagic = 0x58444951;  // "QIDX" little-endian
+constexpr uint32_t kQidxVersion = 2;
+constexpr uint32_t kQidxHeaderWords = 6;
+constexpr uint32_t kDefinitionHeapHeadroomBytes = 8 * 1024;
 
 }  // namespace
 
@@ -229,9 +241,8 @@ void StarDictLookup::close() {
   if (dictFile_) {
     dictFile_.close();
   }
-  // swap, not .clear() - checkpoints_ is the in-RAM index built by buildCheckpoints() (hundreds of
-  // entries for a large dictionary), and .clear() alone would leave that capacity reserved.
-  std::vector<Checkpoint>().swap(checkpoints_);
+  // swap, not .clear() — sampleOffsets_ can be a few thousand uint32s; .clear() would keep capacity.
+  std::vector<uint32_t>().swap(sampleOffsets_);
   std::vector<DefCacheEntry>().swap(defCache_);
   std::string().swap(folderPath_);
   std::string().swap(bookname_);
@@ -344,16 +355,18 @@ bool StarDictLookup::open(const std::string& folderPath) {
                 static_cast<unsigned long long>(dictFile_.fileSize()));
 
   const unsigned long t0 = millis();
-  if (!buildCheckpoints()) {
-    Serial.printf("[%lu] [DICT] Could not build index checkpoints for %s\n", millis(), folderPath.c_str());
+  const std::string qidxPath = folderPath + "/" + kSampleIndexFileName;
+  if (!loadSampleIndex(qidxPath) && !buildSampleIndex(qidxPath)) {
+    Serial.printf("[%lu] [DICT] Could not load or build sample index for %s\n", millis(), folderPath.c_str());
     close();
     return false;
   }
+  SdMan.remove((folderPath + "/.inx-stardict-cp").c_str());
 
   folderPath_ = folderPath;
   isOpen_ = true;
-  Serial.printf("[%lu] [DICT] Opened '%s' (%u words, %u checkpoints, %s offsets, sort=%s) in %lums\n", millis(),
-                bookname_.c_str(), wordCount_, static_cast<unsigned>(checkpoints_.size()),
+  Serial.printf("[%lu] [DICT] Opened '%s' (%u words, %u samples, %s offsets, sort=%s) in %lums\n", millis(),
+                bookname_.c_str(), wordCount_, static_cast<unsigned>(sampleOffsets_.size()),
                 use64BitOffsets_ ? "64-bit" : "32-bit", caseInsensitiveSort_ ? "case-insensitive" : "byte-order",
                 millis() - t0);
   return true;
@@ -378,16 +391,102 @@ bool StarDictLookup::readIdxEntry(IdxCursor& cur, std::string& outEntryText, uin
   return cur.readBE32(outDictSize);
 }
 
-bool StarDictLookup::buildCheckpoints() {
-  checkpoints_.clear();
-  if (wordCount_ > 0) {
-    // Reserve roughly wordCount/stride slots so we don't reallocate during the scan.
-    const size_t estimate = static_cast<size_t>(wordCount_ / kCheckpointStride) + 2;
-    checkpoints_.reserve(std::min(estimate, static_cast<size_t>(8192)));
+std::string StarDictLookup::stripSurroundingPunctuation(const std::string& word) {
+  const auto* b = reinterpret_cast<const unsigned char*>(word.data());
+  size_t start = 0;
+  size_t end = word.size();
+  while (start < end) {
+    if (!isWordByte(b[start])) {
+      ++start;
+    } else if (isGeneralPunctuationAt(b, start, end)) {
+      start += 3;
+    } else {
+      break;
+    }
+  }
+  while (end > start) {
+    if (!isWordByte(b[end - 1])) {
+      --end;
+    } else if (end - start >= 3 && isGeneralPunctuationAt(b, end - 3, end)) {
+      end -= 3;
+    } else {
+      break;
+    }
+  }
+  return word.substr(start, end - start);
+}
+
+bool StarDictLookup::needsIndexBuild(const std::string& folderPath) {
+  const std::string qidxPath = folderPath + "/" + kSampleIndexFileName;
+  FsFile file;
+  if (!SdMan.openFileForRead("DICT", qidxPath, file)) {
+    return true;
+  }
+  uint32_t magic = 0;
+  uint32_t version = 0;
+  uint32_t interval = 0;
+  const bool ok = readLe32(file, magic) && readLe32(file, version) && readLe32(file, interval) &&
+                  magic == kQidxMagic && version == kQidxVersion && interval == kSampleInterval;
+  file.close();
+  return !ok;
+}
+
+bool StarDictLookup::loadSampleIndex(const std::string& qidxPath) {
+  sampleOffsets_.clear();
+  FsFile file;
+  if (!SdMan.openFileForRead("DICT", qidxPath, file)) {
+    return false;
+  }
+  uint32_t magic = 0;
+  uint32_t version = 0;
+  uint32_t interval = 0;
+  uint32_t sampleCount = 0;
+  uint32_t cachedIdxSize = 0;
+  uint32_t flags = 0;
+  if (!readLe32(file, magic) || !readLe32(file, version) || !readLe32(file, interval) ||
+      !readLe32(file, sampleCount) || !readLe32(file, cachedIdxSize) || !readLe32(file, flags) ||
+      magic != kQidxMagic || version != kQidxVersion || interval != kSampleInterval ||
+      cachedIdxSize != idxFileSize_ || sampleCount == 0 ||
+      sampleCount > std::max<uint32_t>(1u, idxFileSize_ / 9u / kSampleInterval + 2u)) {
+    file.close();
+    return false;
   }
 
+  std::vector<uint32_t> loaded(sampleCount);
+  if (file.read(reinterpret_cast<uint8_t*>(loaded.data()), sampleCount * 4) !=
+      static_cast<int>(sampleCount * 4)) {
+    file.close();
+    return false;
+  }
+  file.close();
+  if (loaded[0] != 0) {
+    return false;
+  }
+
+  sampleOffsets_ = std::move(loaded);
+  caseInsensitiveSort_ = (flags & 1u) != 0;
+  Serial.printf("[%lu] [DICT] Loaded %u qidx samples (%s sort)\n", millis(),
+                static_cast<unsigned>(sampleOffsets_.size()),
+                caseInsensitiveSort_ ? "case-insensitive" : "byte-order");
+  return true;
+}
+
+bool StarDictLookup::buildSampleIndex(const std::string& qidxPath) {
+  sampleOffsets_.clear();
+  FsFile out;
+  if (!SdMan.openFileForWrite("DICT", qidxPath, out)) {
+    return false;
+  }
+
+  const uint32_t placeholder[kQidxHeaderWords] = {};
+  bool ok = out.write(reinterpret_cast<const uint8_t*>(placeholder), sizeof(placeholder)) == sizeof(placeholder) &&
+            writeLe32(out, 0);
+  uint32_t sampleCount = ok ? 1 : 0;
+
   IdxCursor cur(idxFile_, idxFileSize_);
-  if (!cur.seek(0)) {
+  if (!ok || !cur.seek(0)) {
+    out.close();
+    SdMan.remove(qidxPath.c_str());
     return false;
   }
 
@@ -398,19 +497,21 @@ bool StarDictLookup::buildCheckpoints() {
   uint32_t byteOrderViolations = 0;
   uint32_t caseFoldViolations = 0;
 
-  while (cur.position() < idxFileSize_) {
+  while (ok && cur.position() < idxFileSize_) {
     const uint32_t entryOffset = cur.position();
     std::string entryText;
     uint64_t dictOffset = 0;
     uint32_t dictSize = 0;
+    if ((count & 0xFF) == 0) {
+      esp_task_wdt_reset();
+    }
     if (!readIdxEntry(cur, entryText, dictOffset, dictSize)) {
-      Serial.printf("[%lu] [DICT] buildCheckpoints: read failed at offset=%u after %u entries (idxFileSize=%u)\n",
-                    millis(), entryOffset, count, idxFileSize_);
+      Serial.printf("[%lu] [DICT] buildSampleIndex: read failed at offset=%u after %u entries\n", millis(),
+                    entryOffset, count);
       break;
     }
     if (cur.position() <= entryOffset) {
-      Serial.printf("[%lu] [DICT] buildCheckpoints: non-advancing entry at offset=%u ('%s') - stopping\n", millis(),
-                    entryOffset, entryText.c_str());
+      Serial.printf("[%lu] [DICT] buildSampleIndex: non-advancing entry at offset=%u\n", millis(), entryOffset);
       break;
     }
 
@@ -423,38 +524,33 @@ bool StarDictLookup::buildCheckpoints() {
         ++caseFoldViolations;
       }
     }
-    prevText = entryText;
-    prevLower = entryLower;
+    prevText = std::move(entryText);
+    prevLower = std::move(entryLower);
     havePrev = true;
-
-    if (count % kCheckpointStride == 0) {
-      checkpoints_.emplace_back(entryOffset, entryText, entryLower);
-      if (checkpoints_.size() <= 3) {
-        Serial.printf("[%lu] [DICT] checkpoint #%u @offset=%u entry='%s'\n", millis(),
-                      static_cast<unsigned>(checkpoints_.size() - 1), entryOffset, entryText.c_str());
-      }
-    }
     ++count;
+    if (count % kSampleInterval == 0 && cur.position() < idxFileSize_) {
+      ok = writeLe32(out, cur.position());
+      ++sampleCount;
+    }
   }
 
-  // Prefer case-insensitive binary search when the file is (mostly) sorted that way and NOT sorted
-  // by plain byte order - the classic third-party failure mode that used to force a full linear scan.
-  // Allow a few local violations (duplicate/near-dup noise) before rejecting a sort order.
   const uint32_t violationBudget = std::max<uint32_t>(4, count / 5000);
-  const bool byteOk = byteOrderViolations <= violationBudget;
-  const bool caseOk = caseFoldViolations <= violationBudget;
-  if (caseOk && !byteOk) {
-    caseInsensitiveSort_ = true;
-  } else {
-    caseInsensitiveSort_ = false;
+  caseInsensitiveSort_ = (caseFoldViolations <= violationBudget) && (byteOrderViolations > violationBudget);
+  const uint32_t flags = caseInsensitiveSort_ ? 1u : 0u;
+  const uint32_t header[kQidxHeaderWords] = {kQidxMagic, kQidxVersion, kSampleInterval, sampleCount, idxFileSize_,
+                                             flags};
+  ok = ok && sampleCount > 0 && out.seekSet(0) &&
+       out.write(reinterpret_cast<const uint8_t*>(header), sizeof(header)) == sizeof(header);
+  out.close();
+  if (!ok) {
+    Serial.printf("[%lu] [DICT] Index build failed, removing %s\n", millis(), qidxPath.c_str());
+    SdMan.remove(qidxPath.c_str());
+    return false;
   }
 
-  Serial.printf("[%lu] [DICT] buildCheckpoints: scanned %u entries (.ifo wordcount=%u), %u checkpoints, "
-                "byteOrderViolations=%u caseFoldViolations=%u sort=%s, last='%s'\n",
-                millis(), count, wordCount_, static_cast<unsigned>(checkpoints_.size()), byteOrderViolations,
-                caseFoldViolations, caseInsensitiveSort_ ? "case-insensitive" : "byte-order",
-                checkpoints_.empty() ? "" : checkpoints_.back().entryText.c_str());
-  return !checkpoints_.empty();
+  Serial.printf("[%lu] [DICT] Indexed %u entries (%u samples, sort=%s)\n", millis(), count, sampleCount,
+                caseInsensitiveSort_ ? "case-insensitive" : "byte-order");
+  return loadSampleIndex(qidxPath);
 }
 
 int StarDictLookup::compareForSearch(const std::string& a, const std::string& aLower, const std::string& b,
@@ -465,31 +561,38 @@ int StarDictLookup::compareForSearch(const std::string& a, const std::string& aL
   return a.compare(b);
 }
 
-bool StarDictLookup::lookupViaCheckpoints(const std::string& candidate, const std::string& candidateLower,
-                                          uint64_t& outDictOffset, uint32_t& outDictSize) {
-  if (checkpoints_.empty()) {
+bool StarDictLookup::lookupViaSamples(const std::string& candidate, const std::string& candidateLower,
+                                      uint64_t& outDictOffset, uint32_t& outDictSize) {
+  if (sampleOffsets_.empty()) {
     return false;
   }
-
-  // Binary search for the last checkpoint whose word is <= candidate under the detected sort order.
-  size_t lo = 0, hi = checkpoints_.size();
-  while (lo < hi) {
-    const size_t mid = lo + (hi - lo) / 2;
-    const Checkpoint& cp = checkpoints_[mid];
-    if (compareForSearch(cp.entryText, cp.entryLower, candidate, candidateLower) <= 0) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
-    }
-  }
-  if (lo == 0) {
-    return false;
-  }
-
-  const uint32_t scanStart = checkpoints_[lo - 1].idxOffset;
-  const uint32_t scanEnd = (lo < checkpoints_.size()) ? checkpoints_[lo].idxOffset : idxFileSize_;
 
   IdxCursor cur(idxFile_, idxFileSize_);
+  size_t lo = 0;
+  size_t hi = sampleOffsets_.size() - 1;
+  while (lo < hi) {
+    const size_t mid = (lo + hi + 1) / 2;
+    if (!cur.seek(sampleOffsets_[mid])) {
+      lo = 0;
+      break;
+    }
+    std::string sampleWord;
+    uint64_t unusedOffset = 0;
+    uint32_t unusedSize = 0;
+    if (!readIdxEntry(cur, sampleWord, unusedOffset, unusedSize)) {
+      lo = 0;
+      break;
+    }
+    const std::string sampleLower = toLowerCopy(sampleWord);
+    if (compareForSearch(sampleWord, sampleLower, candidate, candidateLower) <= 0) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+
+  const uint32_t scanStart = sampleOffsets_[lo];
+  const uint32_t scanEnd = (lo + 1 < sampleOffsets_.size()) ? sampleOffsets_[lo + 1] : idxFileSize_;
   if (!cur.seek(scanStart)) {
     return false;
   }
@@ -509,9 +612,6 @@ bool StarDictLookup::lookupViaCheckpoints(const std::string& candidate, const st
       return true;
     }
     if (cmp > 0) {
-      // Passed where the candidate would sort - not present in this bracket under the assumed order.
-      // For case-insensitive sort, also accept a case-only mismatch that strcmp would reject but
-      // lower-compare already handled via compareForSearch == 0 above.
       break;
     }
   }
@@ -524,7 +624,6 @@ bool StarDictLookup::lookupViaLinearScan(const std::vector<std::string>& candida
     return false;
   }
 
-  // Track best (lowest index in candidatesLower) hit so we prefer the as-typed base form over a stem.
   int bestPriority = -1;
   uint64_t bestOffset = 0;
   uint32_t bestSize = 0;
@@ -535,7 +634,13 @@ bool StarDictLookup::lookupViaLinearScan(const std::vector<std::string>& candida
     return false;
   }
 
+  uint32_t scanned = 0;
   while (cur.position() < idxFileSize_) {
+    if ((scanned & 0xFF) == 0) {
+      esp_task_wdt_reset();
+    }
+    ++scanned;
+
     std::string entryWord;
     uint64_t dictOffset = 0;
     uint32_t dictSize = 0;
@@ -550,7 +655,6 @@ bool StarDictLookup::lookupViaLinearScan(const std::vector<std::string>& candida
           bestOffset = dictOffset;
           bestSize = dictSize;
           bestLower = entryLower;
-          // Exact first candidate - can't do better.
           if (bestPriority == 0) {
             outHitLower = bestLower;
             outDictOffset = bestOffset;
@@ -578,6 +682,11 @@ bool StarDictLookup::readDefinition(const uint64_t dictOffset, const uint32_t di
     return false;
   }
   const uint32_t readSize = std::min(dictSize, kMaxDefinitionBytes);
+  if (ESP.getMaxAllocHeap() < readSize + kDefinitionHeapHeadroomBytes) {
+    Serial.printf("[%lu] [DICT] Low heap for %u byte definition (maxAlloc=%u)\n", millis(), readSize,
+                  static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    return false;
+  }
   if (outTruncated) {
     *outTruncated = readSize < dictSize;
   }
@@ -630,9 +739,10 @@ bool StarDictLookup::lookup(const std::string& queryWord, std::string& outDefini
     return false;
   }
 
-  const std::string cleaned = stripPunctuation(queryWord);
+  const std::string cleaned = stripSurroundingPunctuation(queryWord);
   if (cleaned.empty()) {
-    Serial.printf("[%lu] [DICT] lookup('%s'): empty after stripPunctuation\n", millis(), queryWord.c_str());
+    Serial.printf("[%lu] [DICT] lookup('%s'): empty after stripSurroundingPunctuation\n", millis(),
+                  queryWord.c_str());
     return false;
   }
 
@@ -661,16 +771,32 @@ bool StarDictLookup::lookup(const std::string& queryWord, std::string& outDefini
   uint32_t dictSize = 0;
   bool found = false;
   std::string hitCandidate;
+  const bool detectedCi = caseInsensitiveSort_;
 
-  for (const std::string& candidate : candidates) {
-    const std::string candidateLower = toLowerCopy(candidate);
-    if (lookupViaCheckpoints(candidate, candidateLower, dictOffset, dictSize)) {
-      found = true;
-      hitCandidate = candidate;
-      Serial.printf("[%lu] [DICT] lookup('%s'): fast path hit on candidate='%s' (%lums)\n", millis(),
-                    queryWord.c_str(), candidate.c_str(), millis() - t0);
-      break;
+  auto tryCandidates = [&]() {
+    for (const std::string& candidate : candidates) {
+      const std::string candidateLower = toLowerCopy(candidate);
+      if (lookupViaSamples(candidate, candidateLower, dictOffset, dictSize)) {
+        found = true;
+        hitCandidate = candidate;
+        return;
+      }
     }
+  };
+
+  tryCandidates();
+  if (!found) {
+    caseInsensitiveSort_ = !detectedCi;
+    tryCandidates();
+    if (found) {
+      Serial.printf("[%lu] [DICT] lookup('%s'): hit after flipping sort order to %s (%lums)\n", millis(),
+                    queryWord.c_str(), caseInsensitiveSort_ ? "case-insensitive" : "byte-order", millis() - t0);
+    } else {
+      caseInsensitiveSort_ = detectedCi;
+    }
+  } else {
+    Serial.printf("[%lu] [DICT] lookup('%s'): fast path hit on candidate='%s' (%lums)\n", millis(),
+                  queryWord.c_str(), hitCandidate.c_str(), millis() - t0);
   }
 
   if (!found) {
@@ -692,6 +818,7 @@ bool StarDictLookup::lookup(const std::string& queryWord, std::string& outDefini
   }
 
   if (!found) {
+    Serial.printf("[%lu] [DICT] lookup('%s'): not in index (%lums)\n", millis(), queryWord.c_str(), millis() - t0);
     return false;
   }
 

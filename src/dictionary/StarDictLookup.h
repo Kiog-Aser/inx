@@ -8,14 +8,16 @@
  * "sametypesequence" .ifo layout is supported, where each .idx entry's dict-file bytes are the
  * raw definition with no per-entry type prefix - this covers the vast majority of distributed
  * StarDict dictionaries. .syn synonym files are not consulted; lookups are exact/case-insensitive
- * word match only.
+ * word match plus a small English stem fallback.
  *
- * Performance notes (ESP32-C3 + SPI SD):
- * - .idx is scanned with a multi-KB read buffer (not one-byte SD reads).
- * - A checkpoint index is built on open for O(log n) bracketed search.
- * - Sort order is detected (byte-order vs case-insensitive) so the fast path works for both
- *   common StarDict layouts instead of falling back to a full linear scan.
- * - Recent definitions are cached in RAM so re-looking-up the same word is effectively free.
+ * Lookup index (same idea as CrossPoint 1.5's .qidx):
+ * - A sidecar of uint32 .idx byte offsets, one sample every 256 entries.
+ * - No headwords are kept in RAM. Binary search seeks the .idx at a sample, reads one word,
+ *   then linear-scans at most 256 entries.
+ * - First open of a dictionary builds the sidecar (one streaming pass). Later opens just load
+ *   the offset table (~a few KB).
+ * - If the sampled search misses (unsorted or unusual .idx order), a buffered linear scan of
+ *   the whole .idx is the last resort so valid entries are not dropped.
  */
 
 #include <SdFat.h>
@@ -32,8 +34,8 @@ class StarDictLookup {
   StarDictLookup(const StarDictLookup&) = delete;
   StarDictLookup& operator=(const StarDictLookup&) = delete;
 
-  /** Locates the .ifo/.idx/.dict files inside folderPath, parses the .ifo header, and builds an in-RAM
-   *  checkpoint index over .idx for fast lookup. Returns false if the set can't be opened/parsed. */
+  /** Locates the .ifo/.idx/.dict files inside folderPath, parses the .ifo header, and loads or
+   *  builds the sampled-offset sidecar. Returns false if the set can't be opened/parsed. */
   bool open(const std::string& folderPath);
   void close();
   bool isOpen() const { return isOpen_; }
@@ -42,29 +44,28 @@ class StarDictLookup {
   /** Absolute path of the folder that was last successfully opened (empty if closed). */
   const std::string& folderPath() const { return folderPath_; }
 
+  /** Sidecar next to the .ifo/.idx/.dict files: sampled .idx byte offsets, no headwords. */
+  static constexpr const char* kSampleIndexFileName = ".inx-qidx";
+
+  /** True when folder has no usable sidecar — first open will scan the .idx (show "Indexing…"). */
+  static bool needsIndexBuild(const std::string& folderPath);
+
+  /** Strips leading/trailing punctuation, including UTF-8 curly quotes/dashes (U+2000–U+206F). */
+  static std::string stripSurroundingPunctuation(const std::string& word);
+
   /** Hard cap on how many raw definition bytes are read from the .dict file (and thus allocated) per
    *  lookup. Some entries in large scholarly dictionaries run 50KB+ of HTML, which can fail to
    *  allocate on the ESP32-C3's fragmented heap and abort() the whole firmware. Definitions this long
    *  never fit the reader's definition panel anyway, so capping the read avoids ever attempting the
    *  huge allocation in the first place. */
-  static constexpr uint32_t kMaxDefinitionBytes = 4000;
+  static constexpr uint32_t kMaxDefinitionBytes = 1600;
 
-  /** Looks up queryWord (exact match, then case-insensitive fallback). Returns true and fills
+  /** Looks up queryWord (exact match, then case-insensitive / stem fallback). Returns true and fills
    *  outDefinition (capped to kMaxDefinitionBytes raw bytes) on success. If outTruncated is non-null,
    *  set to whether the on-disk definition was larger than the cap. */
   bool lookup(const std::string& queryWord, std::string& outDefinition, bool* outTruncated = nullptr);
 
  private:
-  // Field named entryText, not "word" - Arduino.h #defines a function-like macro `word(...)`
-  // that silently breaks member-initializer syntax like `word(std::move(w))`.
-  struct Checkpoint {
-    Checkpoint(uint32_t offset, std::string w, std::string lower)
-        : idxOffset(offset), entryText(std::move(w)), entryLower(std::move(lower)) {}
-    uint32_t idxOffset = 0;
-    std::string entryText;
-    std::string entryLower;
-  };
-
   struct DefCacheEntry {
     DefCacheEntry(std::string key, std::string def, bool trunc)
         : keyLower(std::move(key)), definition(std::move(def)), truncated(trunc) {}
@@ -99,21 +100,18 @@ class StarDictLookup {
   };
 
   bool parseIfo(const std::string& ifoPath);
-  bool buildCheckpoints();
-  /** Reads one variable-length .idx entry starting at cursor's current position. Advances the cursor
-   *  past the entry. dict-offset is 4 or 8 bytes depending on use64BitOffsets_. */
+  bool loadSampleIndex(const std::string& qidxPath);
+  bool buildSampleIndex(const std::string& qidxPath);
   bool readIdxEntry(IdxCursor& cur, std::string& outEntryText, uint64_t& outDictOffset, uint32_t& outDictSize);
 
-  /** Comparison matching the detected on-disk sort order. Returns <0, 0, >0. */
   int compareForSearch(const std::string& a, const std::string& aLower, const std::string& b,
                        const std::string& bLower) const;
 
-  /** Checkpoint-based binary search + bounded buffered scan. Returns true/fills offsets on match. */
-  bool lookupViaCheckpoints(const std::string& candidate, const std::string& candidateLower, uint64_t& outDictOffset,
-                            uint32_t& outDictSize);
+  bool lookupViaSamples(const std::string& candidate, const std::string& candidateLower, uint64_t& outDictOffset,
+                        uint32_t& outDictSize);
 
   /** One sequential pass over .idx matching any of the lowercase candidates (first hit wins in
-   *  candidate-list order when multiple match - we track best priority). Buffered; last resort. */
+   *  candidate-list order when multiple match). Buffered last resort when sampled search misses. */
   bool lookupViaLinearScan(const std::vector<std::string>& candidatesLower, std::string& outHitLower,
                            uint64_t& outDictOffset, uint32_t& outDictSize);
 
@@ -130,14 +128,11 @@ class StarDictLookup {
   std::string sameTypeSequence_;
   uint32_t wordCount_ = 0;
   uint32_t idxFileSize_ = 0;
-  // Whether .idx dict-offset fields are 8 bytes (idxoffsetbits=64 in .ifo) instead of the default 4.
   bool use64BitOffsets_ = false;
-  /** When true, .idx is ordered by case-insensitive word compare (common third-party layout). When
-   *  false, plain strcmp / byte order (documented StarDict convention). */
   bool caseInsensitiveSort_ = false;
-  std::vector<Checkpoint> checkpoints_;
+  std::vector<uint32_t> sampleOffsets_;
 
-  static constexpr uint32_t kCheckpointStride = 64;
+  static constexpr uint32_t kSampleInterval = 256;
   static constexpr size_t kDefCacheSlots = 12;
   std::vector<DefCacheEntry> defCache_;
 };
