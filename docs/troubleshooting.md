@@ -6,6 +6,7 @@ This document show most common issues and possible solutions while using the dev
     - [Cannot See the Device on the Network](#cannot-see-the-device-on-the-network)
     - [Connection Drops or Times Out](#connection-drops-or-times-out)
     - [Upload Fails](#upload-fails)
+    - [DRM-Protected Book](#drm-protected-book)
     - [Saved Password Not Working](#saved-password-not-working)
 
 ### Cannot See the Device on the Network
@@ -44,6 +45,16 @@ This document show most common issues and possible solutions while using the dev
 2. Check that the SD card has enough free space
 3. Try uploading a smaller file first to test
 4. Refresh the browser page and try again
+
+### DRM-Protected Book
+
+**Problem:** Import or open shows "DRM-protected", "ACSM file", "Kindle", or "LCP-protected"
+
+**What this means:** The file is locked to a store or library app. Inx does not decrypt DRM.
+
+**What works:** Unencrypted EPUB, TXT, MD, and XTC. Many stores sell a DRM-free EPUB download, or the publisher offers one directly.
+
+**What does not work:** Kindle (`.azw`, `.kfx`), Adobe Digital Editions ACSM/ADEPT EPUB, and Readium LCP packages. An ACSM file is a download license, not the book.
 
 ### Saved Password Not Working
 

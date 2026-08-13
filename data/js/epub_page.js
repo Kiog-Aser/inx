@@ -169,6 +169,66 @@ function filterEpubFiles(fileList) {
   return Array.from(fileList).filter((f) => f.name.toLowerCase().endsWith(".epub"));
 }
 
+function protectionMessageForFilename(name) {
+  const n = String(name || "").toLowerCase();
+  if (n.endsWith(".acsm")) {
+    return "Adobe ACSM files are download licenses, not books. Inx cannot import them.";
+  }
+  if (n.endsWith(".lcpl")) {
+    return "Readium LCP licenses are not supported.";
+  }
+  if (n.endsWith(".azw") || n.endsWith(".azw3") || n.endsWith(".kfx") || n.endsWith(".kcr")) {
+    return "Kindle files are not supported. Inx reads unencrypted EPUB, TXT, MD, and XTC.";
+  }
+  return "";
+}
+
+function zipEntryIgnoreCase(zip, path) {
+  const want = String(path || "").replace(/\\/g, "/").toLowerCase();
+  for (const [entryPath, entry] of Object.entries(zip.files)) {
+    if (!entry.dir && String(entryPath).replace(/\\/g, "/").toLowerCase() === want) return entry;
+  }
+  return null;
+}
+
+function classifyEncryptionXml(xml) {
+  const text = String(xml || "");
+  const has = (needle) => text.indexOf(needle) !== -1;
+  if (has("www.edrlab.org/lcp") || has("xmlenc#aes256-cbc")) return "lcp";
+  if (has("ns.adobe.com/digitaleditions") || has("xmlenc#aes128-cbc") || has("ns.adobe.com/adept")) return "adept";
+  if (has(".xhtml") || has(".html") || has(".htm")) return "encrypted";
+  if (has("idpf.org/2008/embedding") || has("ns.adobe.com/pdf/enc#RC")) return "";
+  if (has("EncryptedData") || has("encrypteddata")) return "encrypted";
+  return "";
+}
+
+function protectionWebMessage(kind) {
+  if (kind === "lcp") {
+    return "This EPUB is LCP-protected and cannot be imported. Inx reads unencrypted EPUB files.";
+  }
+  return "This EPUB is DRM-protected and cannot be imported. Inx reads unencrypted EPUB files.";
+}
+
+async function inspectEpubProtection(file) {
+  const fromName = protectionMessageForFilename(file && file.name);
+  if (fromName) return fromName;
+  await loadJsZip();
+  const zip = await JSZip.loadAsync(file);
+  if (zipEntryIgnoreCase(zip, "META-INF/license.lcpl")) return protectionWebMessage("lcp");
+  const enc = zipEntryIgnoreCase(zip, "META-INF/encryption.xml");
+  if (!enc) return "";
+  let xml = "";
+  try {
+    xml = await enc.async("string");
+  } catch (_) {
+    return protectionWebMessage("encrypted");
+  }
+  const kind = classifyEncryptionXml(xml);
+  if (kind) return protectionWebMessage(kind);
+  if (zipEntryIgnoreCase(zip, "META-INF/rights.xml")) return protectionWebMessage("adept");
+  return "";
+}
+
 // Optimizes and uploads a batch of EPUB files straight to destPath, with progress shown inline on the
 // page (no modal, no separate confirm step) - used by both the page-level dropzone and folder-row drop
 // targets, and by picking files via the dropzone's click-to-browse fallback.
@@ -186,17 +246,28 @@ async function uploadEpubFiles(files, destPath) {
   );
 
   const prepared = [];
+  const failed = [];
   for (let idx = 0; idx < files.length; idx++) {
     const file = files[idx];
     const prepPct = Math.round((idx / files.length) * 50);
     setUploadStatus("Preparing " + file.name, idx + 1 + "/" + files.length, prepPct, true);
     addModalLog("modalLog", "--- " + file.name + " ---", "info");
-    const blob = await optimizeEPUB(file);
-    prepared.push({ blob, name: file.name });
+    try {
+      const blocked = await inspectEpubProtection(file);
+      if (blocked) {
+        addModalLog("modalLog", file.name + ": " + blocked, "error");
+        failed.push(file.name);
+        continue;
+      }
+      const blob = await optimizeEPUB(file);
+      prepared.push({ blob, name: file.name });
+    } catch (e) {
+      addModalLog("modalLog", "Prepare failed: " + file.name + " (" + e.message + ")", "error");
+      failed.push(file.name);
+    }
   }
 
   let succeeded = 0;
-  const failed = [];
   for (let idx = 0; idx < prepared.length; idx++) {
     const { blob, name } = prepared[idx];
     const uploadPct = 50 + Math.round((idx / prepared.length) * 50);
@@ -378,9 +449,18 @@ function addDropHandlers(el, onDrop) {
     e.stopPropagation();
     el.classList.remove("dragover");
     if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
-    const files = filterEpubFiles(e.dataTransfer.files);
+    const dropped = Array.from(e.dataTransfer.files);
+    const files = filterEpubFiles(dropped);
+    dropped
+      .filter((f) => !f.name.toLowerCase().endsWith(".epub"))
+      .forEach((f) => {
+        addModalLog(
+          "modalLog",
+          f.name + ": " + (protectionMessageForFilename(f.name) || "Only .epub files are accepted."),
+          "error"
+        );
+      });
     if (!files.length) {
-      addModalLog("modalLog", "Dropped file(s) ignored - only .epub files are accepted.", "error");
       return;
     }
     onDrop(files);

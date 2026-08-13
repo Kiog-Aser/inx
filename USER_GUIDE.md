@@ -216,6 +216,7 @@ Accessible by pressing **Confirm** while inside a book.
 
 ## 6. Current Limitations & Roadmap
 
-Please note that this firmware is currently in active development. The following features are **not yet supported** but are planned for future updates:
+Please note that this firmware is currently in active development. The following features are **not yet supported**:
 
+* **DRM-protected books:** Kindle, Adobe ACSM/ADEPT, and Readium LCP files cannot be opened. Inx reads unencrypted EPUB, TXT, MD, and XTC. Font obfuscation in a normal EPUB is not DRM and still works.
 * **Images:** Embedded images in e-books will not render.

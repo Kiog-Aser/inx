@@ -98,6 +98,20 @@ function setUploadStatus(text, count, percent, visible) {
   document.getElementById("upload-progress").style.width = Math.max(0, Math.min(100, percent || 0)) + "%";
 }
 
+function protectionMessageForFilename(name) {
+  const n = String(name || "").toLowerCase();
+  if (n.endsWith(".acsm")) {
+    return "Adobe ACSM files are download licenses, not books. Inx cannot import them.";
+  }
+  if (n.endsWith(".lcpl")) {
+    return "Readium LCP licenses are not supported.";
+  }
+  if (n.endsWith(".azw") || n.endsWith(".azw3") || n.endsWith(".kfx") || n.endsWith(".kcr")) {
+    return "Kindle files are not supported. Inx reads unencrypted EPUB, TXT, MD, and XTC.";
+  }
+  return "";
+}
+
 async function uploadBlobToPath(blob, filename, destination) {
   const form = new FormData();
   form.append("file", blob, filename);
@@ -117,6 +131,8 @@ async function uploadFiles(files, destination) {
     const file = files[index];
     setUploadStatus("Uploading " + file.name, index + 1 + "/" + files.length, (index / files.length) * 100, true);
     try {
+      const blocked = protectionMessageForFilename(file.name);
+      if (blocked) throw new Error(blocked);
       await uploadBlobToPath(file, file.name, destination);
       completed++;
     } catch (error) {

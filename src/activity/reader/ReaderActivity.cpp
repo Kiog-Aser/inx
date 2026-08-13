@@ -9,6 +9,7 @@
 #include <freertos/task.h>
 
 #include "Epub.h"
+#include "Epub/BookProtection.h"
 #include "Epub/EpubActivity.h"
 #include "Txt.h"
 #include "TxtReaderActivity.h"
@@ -160,10 +161,12 @@ void ReaderActivity::onGoToTxtReader(std::unique_ptr<Txt> txt) {
       [] {}));
 }
 
-void ReaderActivity::showCorruptedBookError() {
+void ReaderActivity::showCorruptedBookError() { showOpenError("Failed to open book."); }
+
+void ReaderActivity::showOpenError(const char* message) {
   renderer.clearScreen();
-  ScreenComponents::drawPopup(renderer, "Failed to open book.");
-  vTaskDelay(pdMS_TO_TICKS(1200));
+  ScreenComponents::drawPopup(renderer, message != nullptr ? message : "Failed to open book.");
+  vTaskDelay(pdMS_TO_TICKS(2200));
 
   if (onGoBack) {
     onGoBack(currentBookPath);
@@ -204,6 +207,13 @@ void ReaderActivity::onEnter() {
     if (!epub) {
       showCorruptedBookError();
       return;
+    }
+    if (!epub->isLoaded()) {
+      const BookProtection protection = inspectBookProtection(initialBookPath);
+      if (protection.isProtected()) {
+        showOpenError(protection.popupMessage());
+        return;
+      }
     }
     onGoToEpubReader(std::move(epub));
   }

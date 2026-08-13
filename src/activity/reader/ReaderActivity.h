@@ -99,6 +99,7 @@ class ReaderActivity final : public ActivityWithSubactivity {
    * @brief Shows a recoverable error before returning to the previous activity
    */
   void showCorruptedBookError();
+  void showOpenError(const char* message);
 
  public:
   /**

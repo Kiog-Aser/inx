@@ -6,6 +6,7 @@
 #include "EpubActivity.h"
 
 #include <Bitmap.h>
+#include <Epub/BookProtection.h>
 #include <Epub/Page.h>
 #include <Epub/PageWordIndex.h>
 #include <FsHelpers.h>
@@ -598,7 +599,8 @@ void EpubActivity::fastPath() {
  */
 bool EpubActivity::slowPath() {
   if (!epub->isLoaded() && !epub->load(true)) {
-    readerPopup("Book seems corrupted");
+    const BookProtection protection = inspectBookProtection(epub->getPath());
+    readerPopup(protection.isProtected() ? protection.popupMessage() : "Book seems corrupted");
     onGoBack();
     return false;
   }

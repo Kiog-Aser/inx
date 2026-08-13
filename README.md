@@ -12,7 +12,7 @@ Inx is a community firmware for Xteink e-paper readers. It is focused on a clean
 
 ## What You Can Do
 
-- Read **EPUB**, **XTC / XTCH**, **TXT**, and **MD** files.
+- Read **EPUB**, **XTC / XTCH**, **TXT**, and **MD** files. DRM-protected store books (Kindle, Adobe ACSM/ADEPT, LCP) are detected and declined.
 - Browse books from **Recent**, **Library**, **Settings**, **File Transfer**, and **Statistics** tabs.
 - Use EPUB features such as bookmarks, annotations, dictionary lookup, go-to-percent, table of contents, footnotes, per-book settings, and KOReader sync.
 - Render **JPEG**, **PNG**, and **BMP** images directly.
