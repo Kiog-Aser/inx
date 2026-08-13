@@ -155,6 +155,9 @@ class EpubActivity final : public ActivityWithSubactivity {
    */
   void pageTurn(bool forward);
 
+  /** True while the post-last-page "End of book" stats screen is showing. */
+  bool showingEndOfBook() const;
+
   /**
    * Renders page contents with margins and status bar.
    *
@@ -260,6 +263,8 @@ class EpubActivity final : public ActivityWithSubactivity {
   void onPercentDrawerSelected(int percent);
   void jumpToPercent(int percent);
 
+  bool isReadingActivity() const override { return true; }
+
   void displayBookTitle();
   void drawLoadingScreen();
   void preloadNextSection();
@@ -348,4 +353,7 @@ class EpubActivity final : public ActivityWithSubactivity {
   void fastPath();
   bool slowPath();
   void displayBookStats();
+  int lastStorySpineIndex() const;
+  bool isAtEndOfStory() const;
+  void markBookFinished();
 };
