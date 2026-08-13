@@ -287,6 +287,8 @@ class EpubActivity final : public ActivityWithSubactivity {
   void onPercentDrawerSelected(int percent);
   void jumpToPercent(int percent);
 
+  bool isReadingActivity() const override { return true; }
+
   void displayBookTitle();
   void drawLoadingScreen();
   void preloadNextSection();

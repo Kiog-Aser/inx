@@ -315,7 +315,11 @@ void SleepActivity::onEnter() {
       renderCustomSleepScreen();
       break;
     case SystemSetting::SLEEP_SCREEN_MODE::COVER:
-      renderCoverSleepScreen();
+      if (fromReader_) {
+        renderCoverSleepScreen();
+      } else {
+        renderCustomSleepScreen();
+      }
       break;
     case SystemSetting::SLEEP_SCREEN_MODE::DATETIME:
       if (dateTimeSleepScreenAvailable()) {

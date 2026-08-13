@@ -254,7 +254,8 @@ void normalizeUnavailableClockSettings() {
 
 void enterDeepSleep() {
   normalizeUnavailableClockSettings();
-  switchTo<SleepActivity>(render, input);
+  const bool fromReader = currentActivity && currentActivity->isReadingActivity();
+  switchTo<SleepActivity>(render, input, fromReader);
   display.deepSleep();
   gpio.startDeepSleep();
 }
@@ -434,8 +435,16 @@ void loop() {
     return;
   }
 
-  if (gpio.isPressed(HalGPIO::BTN_POWER) && gpio.getHeldTime() > SETTINGS.getPowerButtonDuration()) {
+  const bool powerHeld = gpio.isPressed(HalGPIO::BTN_POWER);
+  if (powerHeld && gpio.getHeldTime() > SETTINGS.getPowerButtonDuration()) {
     enterDeepSleep();
+    return;
+  }
+
+  // Ignore other input while power is held so a long-press-to-sleep cannot also
+  // open the selected home/library book (GPIO bounce / Confirm during the hold).
+  if (powerHeld) {
+    delay(10);
     return;
   }
 
