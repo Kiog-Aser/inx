@@ -13,7 +13,6 @@
 #include <SDCardManager.h>
 #include <Serialization.h>
 #include <Xtc.h>
-#include <esp_heap_caps.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -620,9 +619,6 @@ const RecentActivity::CachedRecentStats& RecentActivity::statsForRecentIndex(con
 void RecentActivity::onEnter() {
   Activity::onEnter();
 
-  Serial.printf("[%lu] [MEM] Free heap at RecentActivity::onEnter(): %u bytes\n", millis(),
-               static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)));
-
   freeRecentPageBuffer();
   layoutEngine_.reset();
   layoutEngineBoundMode_ = ViewMode::Flow;
@@ -1167,12 +1163,12 @@ void RecentActivity::loop() {
   }
 
   if (isListView) {
-    if (downPressed && selectorIndex < totalBooks - 1) {
-      selectorIndex++;
+    if (downPressed && totalBooks > 0) {
+      selectorIndex = (selectorIndex + 1) % totalBooks;
       selectorChanged = true;
     }
-    if (upPressed && selectorIndex > 0) {
-      selectorIndex--;
+    if (upPressed && totalBooks > 0) {
+      selectorIndex = (selectorIndex + totalBooks - 1) % totalBooks;
       selectorChanged = true;
     }
 
@@ -1194,11 +1190,11 @@ void RecentActivity::loop() {
       return;
     }
   } else {
-    if (downPressed && selectorIndex < totalBooks - 1) {
-      selectorIndex++;
+    if (downPressed && totalBooks > 0) {
+      selectorIndex = (selectorIndex + 1) % totalBooks;
       selectorChanged = true;
-    } else if (upPressed && selectorIndex > 0) {
-      selectorIndex--;
+    } else if (upPressed && totalBooks > 0) {
+      selectorIndex = (selectorIndex + totalBooks - 1) % totalBooks;
       selectorChanged = true;
     }
 

@@ -9,7 +9,6 @@
 #include <GfxRenderer.h>
 #include <HardwareSerial.h>
 #include <SDCardManager.h>
-#include <esp_heap_caps.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -62,8 +61,6 @@ void CategorySettingsActivity::taskTrampoline(void* param) {
  */
 void CategorySettingsActivity::onEnter() {
   Activity::onEnter();
-  Serial.printf("[%lu] [MEM] Free heap at CategorySettingsActivity::onEnter(): %u bytes\n", millis(),
-               static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)));
   renderingMutex = xSemaphoreCreateMutex();
 
   halfRefreshOnLoadApplied_ = false;
@@ -286,19 +283,11 @@ void CategorySettingsActivity::setupMenu() {
           }
         }
         if (setting.type == SettingType::VALUE) {
-          if (setting.name != nullptr && strcmp(setting.name, "Timezone") == 0) {
-            entry.getValueText = []() -> const char* {
-              static char buffer[16];
-              SETTINGS.formatTimeZone(buffer, sizeof(buffer));
-              return buffer;
-            };
-          } else {
-            entry.getValueText = [settingPtr]() -> const char* {
-              static char buffer[32];
-              snprintf(buffer, sizeof(buffer), "%d", SETTINGS.*(settingPtr->valuePtr));
-              return buffer;
-            };
-          }
+          entry.getValueText = [settingPtr]() -> const char* {
+            static char buffer[32];
+            snprintf(buffer, sizeof(buffer), "%d", SETTINGS.*(settingPtr->valuePtr));
+            return buffer;
+          };
           entry.change = [this, settingPtr](int delta) {
             int current = SETTINGS.*(settingPtr->valuePtr);
             int newVal = current + (delta * settingPtr->valueRange.step);
@@ -383,17 +372,6 @@ void CategorySettingsActivity::applyChange(int delta) {
   selected.change(delta);
 }
 
-namespace {
-std::string formatTimezoneOption(const uint8_t value) {
-  const int minutes = (static_cast<int>(value) - 48) * 15;
-  const char sign = minutes < 0 ? '-' : '+';
-  const int absMinutes = minutes < 0 ? -minutes : minutes;
-  char buffer[16];
-  std::snprintf(buffer, sizeof(buffer), "UTC%c%02d:%02d", sign, absMinutes / 60, absMinutes % 60);
-  return std::string(buffer);
-}
-}  // namespace
-
 int CategorySettingsActivity::selectedOptionIndex(const MenuEntry& entry) const {
   if (!entry.valuePtr) {
     return 0;
@@ -464,13 +442,9 @@ void CategorySettingsActivity::openSelectorForSelected() {
   } else {
     const int step = std::max(1, static_cast<int>(entry.valueRange.step));
     for (int value = entry.valueRange.min; value <= entry.valueRange.max; value += step) {
-      if (entry.name && std::strcmp(entry.name, "Timezone") == 0) {
-        selectorOptions.push_back(formatTimezoneOption(static_cast<uint8_t>(value)));
-      } else {
-        char buffer[16];
-        std::snprintf(buffer, sizeof(buffer), "%d", value);
-        selectorOptions.emplace_back(buffer);
-      }
+      char buffer[16];
+      std::snprintf(buffer, sizeof(buffer), "%d", value);
+      selectorOptions.emplace_back(buffer);
     }
   }
   if (selectorOptions.empty()) {
@@ -731,18 +705,25 @@ void CategorySettingsActivity::loop() {
   bool needRedraw = false;
 
   if (upPressed) {
-    if (selectedIndex > 0) {
-      selectedIndex--;
+    const int totalItems = static_cast<int>(menuItems.size());
+    if (totalItems > 0) {
+      selectedIndex = (selectedIndex - 1 + totalItems) % totalItems;
+      const int maxScroll = std::max(0, totalItems - itemsPerPage);
       if (selectedIndex < scrollOffset) scrollOffset = selectedIndex;
+      if (selectedIndex >= scrollOffset + itemsPerPage) scrollOffset = std::min(selectedIndex - itemsPerPage + 1, maxScroll);
+      scrollOffset = std::max(0, std::min(scrollOffset, maxScroll));
       needRedraw = true;
     }
   } else if (downPressed) {
-    if (selectedIndex < (int)menuItems.size() - 1) {
-      selectedIndex++;
-      int maxScroll = std::max(0, (int)menuItems.size() - itemsPerPage);
+    const int totalItems = static_cast<int>(menuItems.size());
+    if (totalItems > 0) {
+      selectedIndex = (selectedIndex + 1) % totalItems;
+      int maxScroll = std::max(0, totalItems - itemsPerPage);
+      if (selectedIndex < scrollOffset) scrollOffset = selectedIndex;
       if (selectedIndex > scrollOffset + itemsPerPage - 1) {
         scrollOffset = std::min(selectedIndex - itemsPerPage + 1, maxScroll);
       }
+      scrollOffset = std::max(0, std::min(scrollOffset, maxScroll));
       needRedraw = true;
     }
   } else if (confirmPressed) {
@@ -890,6 +871,12 @@ void CategorySettingsActivity::render() {
   const int dividerY = headerY + headerHeight;
   renderer.line.render(0, dividerY, pageWidth, dividerY, true);
 
+  const char* backLbl = selectorOpen ? "Cancel" : (backButtonLabel ? backButtonLabel : "\xC2\xAB Back");
+  const char* confirmLbl = selectorOpen ? "Select" : "Open";
+  const char* prevLbl = selectorOpen ? "Page -" : "";
+  const char* nextLbl = selectorOpen ? "Page +" : "";
+  const auto labels = mappedInput.mapLabels(backLbl, confirmLbl, prevLbl, nextLbl);
+
   const int startY = dividerY;
   constexpr int itemHeight = UiTheme::DRAWER_LIST_ITEM_HEIGHT;
 
@@ -971,15 +958,20 @@ void CategorySettingsActivity::render() {
     renderer.rectangle.fill(pageWidth - 4, thumbY, 2, thumbH, true);
   }
 
+  if (INX_THEME.mainTabsAtBottom()) {
+    // Bottom-tabs mode moves the tab bar to the screen bottom, where the classic button-hints row normally
+    // goes, so redraw that same row just above the tab bar instead — only for this settings screen, since
+    // other bottom-tabs screens rely on the tab bar alone.
+    const int hintsAreaTop = mainContentBottom(renderer) - kBottomButtonHintsHeight;
+    const int hintsY = hintsAreaTop + (kBottomButtonHintsHeight - 40) / 2;
+    renderer.ui.buttonHints(ATKINSON_HYPERLEGIBLE_10_FONT_ID, labels.btn1, labels.btn2, labels.btn3, labels.btn4,
+                           hintsY);
+  }
+
   if (selectorOpen) {
     renderSelectorOverlay();
   }
 
-  const char* backLbl = selectorOpen ? "Cancel" : (backButtonLabel ? backButtonLabel : "\xC2\xAB Back");
-  const char* confirmLbl = selectorOpen ? "Select" : "Open";
-  const char* prevLbl = selectorOpen ? "Page -" : "";
-  const char* nextLbl = selectorOpen ? "Page +" : "";
-  const auto labels = mappedInput.mapLabels(backLbl, confirmLbl, prevLbl, nextLbl);
   renderButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

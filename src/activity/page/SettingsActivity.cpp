@@ -47,16 +47,17 @@ std::vector<SettingInfo> buildSystemPageSettings(const bool x3) {
   settings.push_back(
       SettingInfo::Enum("Library Mode", &SystemSetting::libraryMode, {"List", "Grid"}, GroupType::DEVICE_DISPLAY));
   settings.push_back(SettingInfo::Toggle("Shelf mode", &SystemSetting::libraryShelfEnabled, GroupType::DEVICE_DISPLAY));
+  settings.push_back(SettingInfo::Toggle("Hide button hints", &SystemSetting::hideButtonHints,
+                                         GroupType::DEVICE_DISPLAY));  // All screens / reader overlays
   settings.push_back(SettingInfo::Value("Recent books shown", &SystemSetting::recentVisibleCount, {1, 9, 1},
                                         GroupType::DEVICE_DISPLAY));
 
   if (x3) {
     settings.push_back(SettingInfo::Separator("Clock", GroupType::CLOCK));
+    settings.push_back(SettingInfo::Toggle("Show Clock", &SystemSetting::showMenuClock, GroupType::CLOCK));
     settings.push_back(SettingInfo::Action("Face", GroupType::CLOCK));
     settings.push_back(
         SettingInfo::Enum("Format", &SystemSetting::sleepClockTimeFormat, {"12 hour", "24 hour"}, GroupType::CLOCK));
-    settings.push_back(
-        SettingInfo::Value("Timezone", &SystemSetting::timeZoneQuarterOffset, {0, 104, 1}, GroupType::CLOCK));
     settings.push_back(SettingInfo::Action("Sync", GroupType::CLOCK));
   }
 
@@ -73,7 +74,8 @@ std::vector<SettingInfo> buildSystemPageSettings(const bool x3) {
   settings.push_back(SettingInfo::Separator("Buttons", GroupType::DEVICE_BUTTONS));
   settings.push_back(SettingInfo::Enum("Front Button", &SystemSetting::frontButtonLayout,
                                        {"Back, Ccnfirm, Left, Right", "Left, Right, Back, Confirm",
-                                        "Left, Back, Confirm, Right", "Back, Confirm, Right, Left"},
+                                        "Left, Back, Confirm, Right", "Back, Confirm, Right, Left",
+                                        "Left, Right, Confirm, Back"},
                                        GroupType::DEVICE_BUTTONS));
   settings.push_back(SettingInfo::Enum("Short Power Button Click", &SystemSetting::shortPwrBtn,
                                        {"Ignore", "Sleep", "Page Refresh"}, GroupType::DEVICE_BUTTONS));

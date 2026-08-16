@@ -20,6 +20,10 @@ constexpr StatusBarItem StatusBar::kFullBarStyles[4];
 static const int STATUS_BAR_LEFT = 0;
 static const int STATUS_BAR_MIDDLE = 1;
 static const int STATUS_BAR_RIGHT = 2;
+static constexpr int kFullProgressBarThickness = 4;
+static constexpr int kFullProgressBarWithPercentReserve = 12;
+static constexpr int kFullPageBarsHeight = 5;
+static constexpr int kCombinedStatusBarGap = 2;
 
 /**
  * @brief Constructs a new StatusBar
@@ -36,11 +40,16 @@ bool StatusBar::hasFullBarContent() {
 }
 
 int StatusBar::reservedFullBarHeight() {
-  if (!hasFullBarContent()) {
-    return 0;
+  switch (static_cast<StatusBarItem>(READER_SETTINGS.statusBarFullStyle)) {
+    case StatusBarItem::PROGRESS_BAR:
+      return kFullProgressBarThickness;
+    case StatusBarItem::PROGRESS_BAR_WITH_PERCENT:
+      return kFullProgressBarWithPercentReserve;
+    case StatusBarItem::PAGE_BARS:
+      return kFullPageBarsHeight;
+    default:
+      return 0;
   }
-  constexpr int kFullBarHeight = 12;
-  return kFullBarHeight;
 }
 
 /**
@@ -57,12 +66,21 @@ void StatusBar::render(const Section* section, int currentSpineIndex, int orient
   if (!m_visible || !section || section->pageCount == 0) {
     return;
   }
+  (void)orientedMarginBottom;
 
   const int screenHeight = m_renderer.getScreenHeight();
   const int screenWidth = m_renderer.getScreenWidth();
   const int fullHeight = reservedFullBarHeight();
-  const int textY = fullHeight > 0 ? screenHeight - orientedMarginBottom - 4
-                                   : screenHeight - m_renderer.text.getLineHeight(ATKINSON_HYPERLEGIBLE_8_FONT_ID) - 5;
+  const int lineHeight = m_renderer.text.getLineHeight(ATKINSON_HYPERLEGIBLE_8_FONT_ID);
+  int textY = screenHeight - lineHeight - 5;
+  if (fullHeight > 0) {
+    int oT, oR, oB, oL;
+    m_renderer.getOrientedViewableTRBL(&oT, &oR, &oB, &oL);
+    (void)oT;
+    (void)oR;
+    (void)oL;
+    textY = screenHeight - oB - fullHeight - kCombinedStatusBarGap - lineHeight;
+  }
 
   const int availableWidth = screenWidth - orientedMarginLeft - orientedMarginRight;
   const int positions[] = {STATUS_BAR_LEFT, STATUS_BAR_MIDDLE, STATUS_BAR_RIGHT};
@@ -110,9 +128,8 @@ void StatusBar::renderFullBar(const int barHeight, const Section* section, const
   if (style == StatusBarItem::PAGE_BARS) {
     // renderPageBars() draws barHeight=5 bars at (textY + 10); back-solve textY so the bars
     // themselves hug the bottom edge instead of floating with padding above it.
-    constexpr int kPageBarsHeight = 5;
     constexpr int kPageBarsYOffset = 10;
-    const int textY = barBottom - kPageBarsHeight - kPageBarsYOffset;
+    const int textY = barBottom - kFullPageBarsHeight - kPageBarsYOffset;
     renderPageBars(x0, (x0 + x1) / 2, x1 - x0, textY, section);
     return;
   }
@@ -123,7 +140,7 @@ void StatusBar::renderFullBar(const int barHeight, const Section* section, const
   const int percentWidth =
       withPercent ? m_renderer.text.getWidth(ATKINSON_HYPERLEGIBLE_8_FONT_ID, percentStr.c_str()) : 0;
 
-  constexpr int barThickness = 6;
+  constexpr int barThickness = kFullProgressBarThickness;
   const int barY = barBottom - barThickness;
   const int barX0 = x0 + 2;
   const int barX1 = x1 - 2 - (withPercent ? percentWidth + 8 : 0);

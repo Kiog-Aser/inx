@@ -108,6 +108,25 @@ void drawUpdateProgressCard(const GfxRenderer& renderer, const int pageWidth, co
   }
   renderer.text.centered(ATKINSON_HYPERLEGIBLE_8_FONT_ID, barY + 26, metaLine.c_str(), true, EpdFontFamily::REGULAR);
 }
+
+void drawUpdateListRow(const GfxRenderer& renderer, const int pageWidth, const int itemY, const char* title,
+                       const char* value, const bool selected) {
+  if (selected) {
+    renderer.rectangle.fill(0, itemY, pageWidth, kFirmwareItemHeight, static_cast<int>(GfxRenderer::FillTone::Ink));
+  }
+
+  constexpr int labelFont = ATKINSON_HYPERLEGIBLE_8_FONT_ID;
+  constexpr int valueFont = ATKINSON_HYPERLEGIBLE_10_FONT_ID;
+  const int labelY = itemY + 7;
+  const int valueY = itemY + 25;
+  const int valueMaxW = pageWidth - 40;
+  const std::string clippedValue = renderer.text.truncate(valueFont, value ? value : "", valueMaxW);
+
+  renderer.text.render(labelFont, 20, labelY, title, !selected, EpdFontFamily::BOLD);
+  renderer.text.render(valueFont, 20, valueY, clippedValue.c_str(), !selected, EpdFontFamily::REGULAR);
+  renderer.line.render(0, itemY + kFirmwareItemHeight - 1, pageWidth, itemY + kFirmwareItemHeight - 1, true,
+                       LineRender::Style::Dotted);
+}
 }  // namespace
 
 void OtaUpdateActivity::taskTrampoline(void* param) {
@@ -131,8 +150,6 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
   xSemaphoreGive(renderingMutex);
   updateRequired = true;
   vTaskDelay(pdMS_TO_TICKS(450));
-  Serial.printf("[%lu] [OTA] free heap before update check: %u bytes\n", millis(),
-                static_cast<unsigned>(ESP.getFreeHeap()));
 
   const auto res = updater.checkForUpdate();
   if (res != OtaUpdater::OK) {
@@ -288,11 +305,12 @@ void OtaUpdateActivity::render() {
     renderer.text.centered(ATKINSON_HYPERLEGIBLE_10_FONT_ID, centerY, "This may take a moment.", true,
                            EpdFontFamily::REGULAR);
   } else if (state == WAITING_CONFIRMATION) {
-    renderer.text.render(ATKINSON_HYPERLEGIBLE_10_FONT_ID, 20, bodyTop, "Current Version: " INX_VERSION, true,
-                         EpdFontFamily::REGULAR);
-    const std::string newVer = "New Version: " + updater.getLatestVersion();
-    renderer.text.render(ATKINSON_HYPERLEGIBLE_10_FONT_ID, 20, bodyTop + 28, newVer.c_str(), true,
-                         EpdFontFamily::REGULAR);
+    const std::string sizeLine =
+        updater.getOtaSize() > 0 ? formatBytes(updater.getOtaSize()) : std::string("Firmware package");
+    drawUpdateListRow(renderer, pageWidth, bodyTop, "CURRENT VERSION", INX_VERSION, false);
+    drawUpdateListRow(renderer, pageWidth, bodyTop + kFirmwareItemHeight, "AVAILABLE UPDATE",
+                      updater.getLatestVersion().c_str(), true);
+    drawUpdateListRow(renderer, pageWidth, bodyTop + kFirmwareItemHeight * 2, "PACKAGE", sizeLine.c_str(), false);
     const auto labels = mappedInput.mapLabels("Cancel", "Update", "", "");
     renderer.ui.buttonHints(ATKINSON_HYPERLEGIBLE_10_FONT_ID, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else if (state == WAITING_SD_SELECTION) {

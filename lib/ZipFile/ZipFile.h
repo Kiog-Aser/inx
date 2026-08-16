@@ -56,7 +56,11 @@ class ZipFile {
 
  public:
   explicit ZipFile(const std::string& filePath) : filePath(filePath) {}
-  ~ZipFile() = default;
+  // FsFile does not close itself on destruction (DESTRUCTOR_CLOSES_FILE=0 in SdFatConfig.h), and every
+  // caller that only needs one read (e.g. Epub::readItemContentsToStream's `ZipFile(path).readFileToStream(...)`
+  // one-liner) relies on this destructor to release the handle - without it, each such call leaks one
+  // open SD file handle for the life of the process.
+  ~ZipFile() { close(); }
 
   bool isOpen() const { return !!file; }
   bool open();
