@@ -15,9 +15,12 @@
 
 #include "EpubAnnotationUi.h"
 #include "EpubDictionaryUi.h"
+#include "EpubFootnoteUi.h"
 #include "EpubReadingStats.h"
 #include "MenuDrawer.h"
 #include "OrientationPickerUi.h"
+#include "PresetPickerUi.h"
+#include "QuickActionsMenuUi.h"
 #include "ReaderButtonBindings.h"
 #include "SettingsDrawer.h"
 #include "StatusBar.h"
@@ -25,6 +28,10 @@
 #include "state/BookProgress.h"
 #include "state/BookSetting.h"
 #include "system/ScreenComponents.h"
+
+#ifdef SIMULATOR
+void runFootnoteSelftestIfRequested();
+#endif
 
 struct ViewportInfo {
   int totalMarginTop;
@@ -45,8 +52,16 @@ struct ViewportInfo {
 class EpubActivity final : public ActivityWithSubactivity {
   friend class EpubAnnotationUi;
   friend class EpubDictionaryUi;
+  friend class EpubFootnoteUi;
   friend class OrientationPickerUi;
+  friend class PresetPickerUi;
+  friend class QuickActionsMenuUi;
   friend class ReaderButtonBindings;
+#ifdef SIMULATOR
+  // Diagnostic-only: lets env:selftest's headless repro driver (src/main.cpp) walk chapters and drive
+  // the footnote overlay directly, without a real EpubActivity/Activity-framework boot sequence.
+  friend void ::runFootnoteSelftestIfRequested();
+#endif
 
  public:
   /**
@@ -84,6 +99,9 @@ class EpubActivity final : public ActivityWithSubactivity {
   void loop() override;
   /** Match Crosspoint-style reader: pump display from loop (no separate FreeRTOS render task). */
   bool skipLoopDelay() override { return true; }
+  /** X3 flick/shake page turns never register as button activity, so with auto-sleep on the device would
+   *  fall asleep mid-read; suppress the idle timeout in-book while that gesture is enabled. */
+  bool preventAutoSleep() override;
 
  private:
   int currentFontId;
@@ -175,6 +193,15 @@ class EpubActivity final : public ActivityWithSubactivity {
    * @param orientedMarginLeft Left margin
    */
   void renderStatusBar(int orientedMarginRight, int orientedMarginBottom, int orientedMarginLeft) const;
+
+  /**
+   * Draws the reading-guide overlay when enabled: Grid (vertical lines at 25% and 75% of the content width)
+   * or Notebook (one horizontal ruled line under each actual text line on the page, so blank space - end of
+   * page, gaps around images - never gets a stray line and every line lands exactly under real text).
+   * Pure overlay — does not affect layout or page cache.
+   */
+  void drawReadingGuideLines(const Page& page, int orientedMarginTop, int orientedMarginRight,
+                             int orientedMarginBottom, int orientedMarginLeft, int fontId) const;
 
   /**
    * Saves current reading progress to file using BookProgress handler.
@@ -288,7 +315,10 @@ class EpubActivity final : public ActivityWithSubactivity {
 
   EpubAnnotationUi annUi_;
   EpubDictionaryUi dictUi_;
+  EpubFootnoteUi footnoteUi_;
   OrientationPickerUi orientationPicker_;
+  PresetPickerUi presetPicker_;
+  QuickActionsMenuUi quickActionsUi_;
   ReaderButtonBindings btnBindings_;
 
   /**
@@ -341,8 +371,12 @@ class EpubActivity final : public ActivityWithSubactivity {
   void markStatusBarLayoutApplied();
   /** Settings drawer callback: keep renderer, drawer, and menu layout in sync while editing. */
   void onBookSettingsLiveLayoutSync();
-  void ensureThumbnailExists();
-  void displayCoverOrTitle();
+  /** @param coverAvailable Whether displayCoverOrTitle() already confirmed a real cover exists (cached or
+   *  freshly extracted) - false skips retrying a thumbnail extraction from the same cover entry that just
+   *  failed (or was never there), while the packaged META-INF/thumbnail.jpg path is still tried either way. */
+  void ensureThumbnailExists(bool coverAvailable);
+  /** @return true if a real cover image (not just the title fallback) is now cached on disk. */
+  bool displayCoverOrTitle();
   void loadCurrentSection(bool showProgress = true);
   void updateExternalState();
   void fastPath();

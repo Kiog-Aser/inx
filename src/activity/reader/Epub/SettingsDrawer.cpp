@@ -419,6 +419,27 @@ void SettingsDrawer::setupMenu() {
       s.markCustomSettings();
     };
     menuItems.push_back(bionicEntry);
+
+    // Per-book (pure visual overlay, never baked into layout/cache) — same pattern as hyphenation/bionic above.
+    // Grid lines sit at 25%/75% of content width so ~half the page is the fixation band.
+    MenuEntry guideLinesEntry;
+    guideLinesEntry.item = MenuItem::ReadingGuideLines;
+    guideLinesEntry.group = GroupType::LAYOUT;
+    guideLinesEntry.name = "Guide Lines";
+    guideLinesEntry.getValueText = [](const BookSettings& s) -> const char* {
+      static const char* styles[] = {"Off", "Grid", "Notebook"};
+      int index = s.readingGuideLinesEnabled;
+      if (index > 2) index = 0;
+      return styles[index];
+    };
+    guideLinesEntry.change = [](BookSettings& s, int delta) {
+      int newVal = s.readingGuideLinesEnabled + delta;
+      if (newVal >= 0 && newVal <= 2) {
+        s.readingGuideLinesEnabled = newVal;
+        s.markCustomSettings();
+      }
+    };
+    menuItems.push_back(guideLinesEntry);
   }
 
   // The "═══ System ═══" group (Text Anti-Aliasing, Refresh Frequency, Power Button, Long-press,
@@ -811,11 +832,18 @@ void SettingsDrawer::handleInput(MappedInputManager& input) {
 
   if (readSettingsListPrev(input, renderer)) {
     const int previousIndex = selectedIndex;
-    if (selectedIndex > 0) {
-      selectedIndex--;
-      const bool scrolled = selectedIndex < scrollOffset;
-      if (scrolled) {
+    const int totalItems = static_cast<int>(menuItems.size());
+    if (totalItems > 0) {
+      selectedIndex = (selectedIndex - 1 + totalItems) % totalItems;
+      const int maxScroll = std::max(0, totalItems - itemsPerPage);
+      const bool scrolled = selectedIndex < scrollOffset || selectedIndex >= scrollOffset + itemsPerPage;
+      if (selectedIndex < scrollOffset) {
         scrollOffset = selectedIndex;
+      } else if (selectedIndex >= scrollOffset + itemsPerPage) {
+        scrollOffset = std::min(selectedIndex - itemsPerPage + 1, maxScroll);
+      }
+      scrollOffset = std::max(0, std::min(scrollOffset, maxScroll));
+      if (scrolled) {
         needRedraw = true;
       } else {
         lastInputTime = currentTime;
@@ -827,12 +855,18 @@ void SettingsDrawer::handleInput(MappedInputManager& input) {
 
   if (readSettingsListNext(input, renderer)) {
     const int previousIndex = selectedIndex;
-    if (selectedIndex < static_cast<int>(menuItems.size()) - 1) {
-      selectedIndex++;
-      int maxScroll = std::max(0, static_cast<int>(menuItems.size()) - itemsPerPage);
-      const bool scrolled = selectedIndex > scrollOffset + itemsPerPage - 1;
-      if (scrolled) {
+    const int totalItems = static_cast<int>(menuItems.size());
+    if (totalItems > 0) {
+      selectedIndex = (selectedIndex + 1) % totalItems;
+      const int maxScroll = std::max(0, totalItems - itemsPerPage);
+      const bool scrolled = selectedIndex < scrollOffset || selectedIndex >= scrollOffset + itemsPerPage;
+      if (selectedIndex < scrollOffset) {
+        scrollOffset = selectedIndex;
+      } else if (selectedIndex >= scrollOffset + itemsPerPage) {
         scrollOffset = std::min(selectedIndex - itemsPerPage + 1, maxScroll);
+      }
+      scrollOffset = std::max(0, std::min(scrollOffset, maxScroll));
+      if (scrolled) {
         needRedraw = true;
       } else {
         lastInputTime = currentTime;
@@ -907,6 +941,9 @@ void SettingsDrawer::applyChange(int delta) {
       case MenuItem::ReaderImageGrayscale:
       case MenuItem::ReaderSmartImageRefresh:
       case MenuItem::ReaderPowerButton:
+      // Pure visual overlay — never affects text layout/pagination, so it never needs the expensive
+      // full-page rebuild that settingsUpdated triggers, just the normal redraw that already happens.
+      case MenuItem::ReadingGuideLines:
         break;
       case MenuItem::StatusBarLeft:
       case MenuItem::StatusBarMiddle:

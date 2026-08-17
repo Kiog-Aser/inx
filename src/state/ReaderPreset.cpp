@@ -36,7 +36,8 @@ void ReaderPresetStore::load() {
     return;
   }
 
-  const size_t recordSize = version >= 3   ? BookSettings::kSerializedSize
+  const size_t recordSize = version >= 4   ? BookSettings::kSerializedSize
+                            : version >= 3 ? BookSettings::kSerializedSizeV3
                             : version >= 2 ? BookSettings::kSerializedSizeV2
                                            : BookSettings::kLegacySerializedSize;
 
@@ -52,7 +53,7 @@ void ReaderPresetStore::load() {
     }
     nameBuf[readLen] = '\0';
 
-    uint8_t record[64] = {0};
+    uint8_t record[BookSettings::kSerializedSize] = {0};
     const size_t toRead = recordSize;
     if (f.read(record, toRead) != static_cast<int>(toRead)) {
       break;
@@ -97,7 +98,7 @@ bool ReaderPresetStore::save() {
     if (nameLen > 0) {
       f.write(reinterpret_cast<const uint8_t*>(preset.name.data()), nameLen);
     }
-    uint8_t record[64] = {0};
+    uint8_t record[BookSettings::kSerializedSize] = {0};
     size_t offset = 0;
     preset.settings.serialize(record, offset);
     f.write(record, offset);
@@ -168,8 +169,7 @@ bool ReaderPresetStore::update(int index, const std::string& name, const BookSet
     READER_SETTINGS.statusBarLeft = statusBarLeft;
     READER_SETTINGS.statusBarMiddle = statusBarMiddle;
     READER_SETTINGS.statusBarRight = statusBarRight;
-    SETTINGS.saveToFile();
-    return true;
+    return READER_SETTINGS.saveToFile();
   }
   if (index - 1 >= static_cast<int>(userPresets_.size())) {
     return false;

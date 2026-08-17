@@ -96,6 +96,9 @@ class ReaderSetting {
   uint8_t refreshFrequency = 3;  ///< SystemSetting::REFRESH_15 (enum index, not the page count - see getRefreshFrequency())
   uint8_t hyphenationEnabled = 1;    ///< Hyphenation enabled
   uint8_t bionicReadingEnabled = 0;  ///< Bionic Reading enabled
+  /** Reading-guide overlay style: 0 = off, 1 = Grid (vertical lines at 25% and 75% of content width, a
+   *  speed-reading aid), 2 = Notebook (horizontal ruled lines like notebook paper). */
+  uint8_t readingGuideLinesEnabled = 0;
 
   uint8_t screenMargin = 10;  ///< Screen margin in pixels
 
@@ -119,6 +122,12 @@ class ReaderSetting {
   /** Long-press on prev/next: 0=off, 1=chapter skip (EPUB), 2=skip 5 pages (EPUB). Legacy files used 0/1 only.
    *  Values match SystemSetting::LONG_PRESS_OFF/LONG_PRESS_CHAPTER_SKIP/LONG_PRESS_PAGE_SKIP_5. */
   uint8_t longPressChapterSkip = 1;  ///< SystemSetting::LONG_PRESS_CHAPTER_SKIP
+
+  /** Bitmask of SystemSetting::READER_BUTTON_ACTION values (bit N = 1u << N) included in the
+   *  "Quick Actions" popup opened by a button mapped to BTN_ACTION_QUICK_ACTIONS - see
+   *  QuickActionsSettingsActivity (the checklist that edits this) and QuickActionsMenuUi (the popup
+   *  that reads it). BTN_ACTION_NONE and BTN_ACTION_QUICK_ACTIONS itself are never set/offered. */
+  uint32_t quickActionsMask = 0;
 
   ~ReaderSetting() = default;
 

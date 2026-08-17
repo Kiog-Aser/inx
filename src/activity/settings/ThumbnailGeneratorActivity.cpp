@@ -39,7 +39,7 @@ void precacheShelfThumbnail(GfxRenderer& renderer, const std::string& thumbPath)
   ImageRender::Options options;
   // Must match LibraryActivity::renderShelfCard's options exactly (cropToFill included) - the display
   // cache is keyed on these, so a mismatch here means the shelf render misses this cache entry.
-  options.cropToFill = true;
+  options.cropToFill = false;
   options.useDisplayCache = true;
   ImageRender::create(renderer, thumbPath).render(0, 0, coverW - 2, coverH - 2, options);
 }

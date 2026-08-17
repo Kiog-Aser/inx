@@ -187,6 +187,10 @@ void EpubDictionaryUi::enter(EpubActivity& act) {
   if (!act.section || !act.epub) {
     return;
   }
+  // The Down+Left entry chord (and a plain long-press Down) leave the button held while
+  // handleInput() is about to stop running for the whole overlay session - reset its per-button
+  // state now so it doesn't misfire a stale long-press the instant this overlay exits.
+  act.btnBindings_.reset();
   mode_ = true;
   showingDefinition_ = false;
   lookedUpWord_.clear();
@@ -553,8 +557,12 @@ bool EpubDictionaryUi::tryNavigationHoldRepeat(EpubActivity& act) {
   } else if (navRepeatDir_ == 1 && rightHeld) {
     moveFocusWord(1);
   } else if (navRepeatDir_ == 2 && upHeld) {
+    // Auto-repeat covers 2 lines/tick (vs. 1 for the initial press) - holding Up/Down would
+    // otherwise take forever to cross a full page at kNavRepeatIntervalMs.
+    moveFocusLine(-1);
     moveFocusLine(-1);
   } else if (navRepeatDir_ == 3 && downHeld) {
+    moveFocusLine(1);
     moveFocusLine(1);
   } else {
     navRepeatDir_ = -1;
@@ -614,8 +622,7 @@ void EpubDictionaryUi::moveFocusLine(const int delta) {
       return;
     }
     lineIdx--;
-    const size_t end = lineFirst_[lineIdx + 1];
-    focus_ = end - 1;
+    focus_ = lineFirst_[lineIdx];
   } else {
     if (lineIdx + 1 >= lineFirst_.size()) {
       return;

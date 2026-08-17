@@ -13,7 +13,6 @@
 #include <HalDisplay.h>
 #include <ImageRender.h>
 #include <SDCardManager.h>
-#include <esp_heap_caps.h>
 #include <esp_task_wdt.h>
 #include <time.h>
 
@@ -65,7 +64,10 @@ static std::string chapterTitleForSpine(const Epub* epub, int spineIndex) {
 namespace {
 constexpr unsigned long goHomeMs = 1000;
 constexpr int statusBarMargin = 5;
-constexpr int statusBarFullGap = 10;
+constexpr int statusBarTopGap = 2;
+constexpr int statusBarCombinedTopGap = 1;
+constexpr int statusBarExtraPaddingMaxScreenMargin = 5;
+constexpr int statusBarFullGap = 2;
 constexpr int progressBarMarginTop = 10;
 constexpr unsigned long bookmarkHoldMs = 1000;
 constexpr bool kReaderHighQualityFastLut = true;
@@ -145,13 +147,18 @@ ViewportInfo EpubActivity::calculateViewport() {
   bool showProgressBar = (READER_SETTINGS.statusBarMiddle == SystemSetting::STATUS_ITEM_PROGRESS_BAR ||
                           READER_SETTINGS.statusBarMiddle == SystemSetting::STATUS_ITEM_PROGRESS_BAR_WITH_PERCENT);
 
+  const int fullBarHeight = StatusBar::reservedFullBarHeight();
   if (hasStatusBar) {
+    const int mainStatusBarTopGap = bookSettings.screenMargin <= statusBarExtraPaddingMaxScreenMargin
+                                        ? (fullBarHeight > 0 ? statusBarCombinedTopGap : statusBarTopGap)
+                                        : 0;
+    const int mainStatusBarReserve =
+        renderer.text.getLineHeight(ATKINSON_HYPERLEGIBLE_8_FONT_ID) + statusBarMargin + mainStatusBarTopGap;
     info.totalMarginBottom +=
-        statusBarMargin - bookSettings.screenMargin +
+        mainStatusBarReserve - bookSettings.screenMargin +
         (showProgressBar ? (ScreenComponents::BOOK_PROGRESS_BAR_HEIGHT + progressBarMarginTop) : 0);
   }
 
-  const int fullBarHeight = StatusBar::reservedFullBarHeight();
   if (hasStatusBar && fullBarHeight > 0) {
     info.totalMarginBottom += statusBarFullGap;
   }
@@ -297,6 +304,16 @@ bool EpubActivity::buildSection(int spineIndex, const ViewportInfo& info, bool s
       bookSettings.hyphenationEnabled, bookSettings.paragraphCssIndentEnabled != 0,
       bookSettings.bionicReadingEnabled != 0, nullptr, skipImages, nullptr, false, ImageRenderMode::OneBit, false,
       info.totalMarginTop);
+
+  if (success) {
+    // This spine's pagination just changed (first build, or a font/size/margin change forced a rebuild) -
+    // re-locate any existing highlights for it by their stored phrase before anything renders, so a
+    // highlight created under one layout stays on the right words after switching to another. Cheap no-op
+    // for the common case of a spine with no annotations.
+    EpubAnnotations::migrateSpineAnnotations(cachePath, spineIndex, tempSection->pageCount, renderer, info.fontId,
+                                             FontManager::getNextFont(info.fontId), info.totalMarginLeft,
+                                             info.totalMarginTop);
+  }
 
   if (useChapterLoadBar) {
     ScreenComponents::fillPopupProgress(renderer, chapterLoadPopup, 100);
@@ -466,18 +483,18 @@ void EpubActivity::saveProgress(int spineIndex, int currentPage, int pageCount, 
 /**
  * @brief Ensures thumbnail exists, generates if needed
  */
-void EpubActivity::ensureThumbnailExists() {
+void EpubActivity::ensureThumbnailExists(const bool coverAvailable) {
   const std::string thumbJpegPath = epub->getThumbJpegPath();
   const std::string thumbBmpPath = epub->getThumbBmpPath();
   if (!SdMan.exists(thumbJpegPath.c_str()) && !SdMan.exists(thumbBmpPath.c_str())) {
-    epub->generateThumbBmp();
+    epub->generateThumbBmp(!coverAvailable);
   }
 }
 
 /**
  * @brief Displays cover if it exists, otherwise shows title
  */
-void EpubActivity::displayCoverOrTitle() {
+bool EpubActivity::displayCoverOrTitle() {
   const std::string coverJpegPath = epub->getCoverJpegPath(false);
   std::string coverPath = epub->getCoverBmpPath(false);
   if (!SdMan.exists(coverPath.c_str()) && !SdMan.exists(coverJpegPath.c_str())) {
@@ -492,7 +509,7 @@ void EpubActivity::displayCoverOrTitle() {
     options.cropToFill = true;
     if (ImageRender::create(renderer, coverJpegPath).render(0, 0, pageWidth, pageHeight, options)) {
       renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-      return;
+      return true;
     }
   }
 
@@ -504,11 +521,12 @@ void EpubActivity::displayCoverOrTitle() {
     renderer.clearScreen();
     if (ImageRender::create(renderer, coverPath).render(0, 0, pageWidth, pageHeight, options)) {
       renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-      return;
+      return true;
     }
   } else {
     displayBookTitle();
   }
+  return false;
 }
 
 /**
@@ -603,12 +621,12 @@ bool EpubActivity::slowPath() {
     return false;
   }
 
-  displayCoverOrTitle();
+  const bool coverAvailable = displayCoverOrTitle();
   loadingProgress = 30;
   drawLoadingScreen();
   vTaskDelay(pdMS_TO_TICKS(50));
 
-  ensureThumbnailExists();
+  ensureThumbnailExists(coverAvailable);
   const int initialSpine = epub->getSpineIndexForInitialOpen();
   currentSpineIndex = (initialSpine == 0 && epub->getSpineItemsCount() > 1) ? 1 : initialSpine;
   nextPageNumber = 0;
@@ -636,8 +654,6 @@ bool EpubActivity::slowPath() {
  */
 void EpubActivity::onEnter() {
   ActivityWithSubactivity::onEnter();
-  Serial.printf("[%lu] [MEM] Free heap at EpubActivity::onEnter() (book open, dictionary untouched): %u bytes\n",
-               millis(), static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)));
   epub->setupCacheDir();
 
   syncSettingsFromGlobalIfNeeded();
@@ -679,6 +695,8 @@ void EpubActivity::onEnter() {
 
   annUi_.clearSessionAndCapture();
 }
+
+bool EpubActivity::preventAutoSleep() { return gpio.deviceIsX3() && SETTINGS.shakePageTurn != 0; }
 
 /**
  * @brief Called when exiting the activity
@@ -767,10 +785,32 @@ void EpubActivity::loop() {
     return;
   }
 
+  if (footnoteUi_.isActive()) {
+    footnoteUi_.handleInput(*this);
+    if (updateRequired && footnoteUi_.isActive()) {
+      updateRequired = false;
+      footnoteUi_.repaint(*this);
+    } else if (updateRequired) {
+      updateRequired = false;
+      renderScreen(true);
+    }
+    return;
+  }
+
   if (orientationPicker_.isActive()) {
     orientationPicker_.handleInput(*this);
     // handleInput() already repaints inline (popup redraw on Up/Down, renderScreen(true) on Back) -
     // Confirm instead sets isToggleClosed so the block below performs the actual relayout next loop().
+    return;
+  }
+
+  if (presetPicker_.isActive()) {
+    presetPicker_.handleInput(*this);
+    return;
+  }
+
+  if (quickActionsUi_.isActive()) {
+    quickActionsUi_.handleInput(*this);
     return;
   }
 
@@ -822,6 +862,16 @@ void EpubActivity::loop() {
   if (section && epub && !menuDrawerVisible && !settingsDrawerVisible) {
     annUi_.tryChordEnter(*this);
     dictUi_.tryChordEnter(*this);
+  }
+
+  // A chord above may have just opened the annotation/dictionary overlay this same frame, with
+  // Down+Right/Down+Left still physically held. Both overlays already reset btnBindings_'s
+  // press-state in their enter(), but calling handleInput() below would immediately re-observe
+  // those still-held buttons and re-arm them - freezing a "held" state for the whole overlay
+  // session that goes stale by the time it closes (same bug the reset() was meant to prevent, just
+  // deferred by one frame). Skip it entirely once an overlay has taken over input this frame.
+  if (annUi_.isActive() || dictUi_.isActive()) {
+    return;
   }
 
   // Up/Down/Left/Right dispatch (page turn, open settings/menu, annotate, dictionary, refresh,
@@ -960,6 +1010,10 @@ void EpubActivity::ensureMenuDrawer() {
               dictUi_.enter(*this);
               break;
             case MenuDrawer::MenuAction::SELECT_CHAPTER:
+              break;
+            case MenuDrawer::MenuAction::APPLY_PRESET:
+              renderScreen(true);
+              presetPicker_.enter(*this);
               break;
             case MenuDrawer::MenuAction::GO_TO_PERCENT:
               // Handled inside MenuDrawer itself (percentProvider/percentSelectedCallback below), same
@@ -1688,7 +1742,12 @@ void EpubActivity::renderContents(std::unique_ptr<Page> page, const int oriented
       if (!section || !EpubAnnotations::recordTouchesPage(rec, currentSpineIndex, section->currentPage)) {
         continue;
       }
-      if (rec.pageWordLo == EpubAnnotations::kWildcard) {
+      // A wildcard index always needed the word text for its search fallback. A stored phrase (rec.text)
+      // now also needs it: mergeStoredRangesForPage() verifies a precise index against that phrase before
+      // trusting it (a font/layout change repaginates the book, so a stale index can otherwise land on the
+      // wrong words entirely) and falls back to searching by phrase when it doesn't match - both need the
+      // actual word strings to compare against, not just the index.
+      if (rec.pageWordLo == EpubAnnotations::kWildcard || !rec.text.empty()) {
         omitStoredWordStrings = false;
         break;
       }
@@ -1760,10 +1819,13 @@ void EpubActivity::renderContents(std::unique_ptr<Page> page, const int oriented
   // images and push a second refresh - so a not-yet-cached image's decode doesn't delay the rest of the
   // page. skipImagesInPageRender already covers the "high quality" grayscale case (images drawn in a
   // separate pass below); fold this case into it so page->render() skips images here too.
-  const bool deferOneBitImageRender = imageMode == ImageRenderMode::OneBit && pageHasImages && !needsImageGrayscale && pageHasLargeImage;
+  const bool deferOneBitImageRender = imageMode == ImageRenderMode::OneBit && pageHasImages && !needsImageGrayscale;
   const bool skipImagesInPageRender = (needsImageGrayscale && highQuality) || deferOneBitImageRender;
   page->render(renderer, fontId, headerFontId, orientedMarginLeft, orientedMarginTop, skipImagesInPageRender, imageMode,
                /*skipOnlyGrayscaleImages=*/highQuality && !deferOneBitImageRender);
+
+  // Overlay before storeBwBuffer so guide lines are preserved through AA/grayscale passes.
+  drawReadingGuideLines(*page, orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft, fontId);
 
   renderStatusBar(orientedMarginRight, orientedMarginBottom, orientedMarginLeft);
   if (isCurrentPageBookmarked()) {
@@ -1864,12 +1926,15 @@ void EpubActivity::renderContents(std::unique_ptr<Page> page, const int oriented
     annUi_.drawUiOverlay(*this);
   } else if (dictUi_.isActive()) {
     dictUi_.drawUiOverlay(*this);
+  } else if (footnoteUi_.isActive()) {
+    footnoteUi_.drawUiOverlay(*this);
   } else if (!annUi_.storedRanges().empty()) {
     annUi_.drawStoredOverlay(*this);
   } else if (highQuality && bwStored) {
     renderer.clearScreen();
     page->render(renderer, fontId, headerFontId, orientedMarginLeft, orientedMarginTop, /*skipImages=*/true,
                  ImageRenderMode::OneBit, /*skipOnlyGrayscaleImages=*/true);
+    drawReadingGuideLines(*page, orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft, fontId);
     renderStatusBar(orientedMarginRight, orientedMarginBottom, orientedMarginLeft);
     if (isCurrentPageBookmarked()) {
       drawBookmarkIndicator();
@@ -1897,6 +1962,61 @@ void EpubActivity::renderStatusBar(const int orientedMarginRight, const int orie
   if (statusBar && section) {
     statusBar->render(section.get(), currentSpineIndex, orientedMarginRight, orientedMarginBottom, orientedMarginLeft);
   }
+}
+
+void EpubActivity::drawReadingGuideLines(const Page& page, const int orientedMarginTop,
+                                         const int orientedMarginRight, const int orientedMarginBottom,
+                                         const int orientedMarginLeft, const int fontId) const {
+  if (!bookSettings.readingGuideLinesEnabled) {
+    return;
+  }
+  const int contentWidth = renderer.getScreenWidth() - orientedMarginLeft - orientedMarginRight;
+  if (contentWidth < 4) {
+    return;
+  }
+  const int lineTop = orientedMarginTop;
+  const int lineBottom = renderer.getScreenHeight() - orientedMarginBottom;
+  if (lineBottom <= lineTop) {
+    return;
+  }
+  if (bookSettings.readingGuideLinesEnabled == 2) {
+    // Notebook: one ruled line under each actual text line on the page (headers use their own bigger font's
+    // metrics) - never a synthetic uniform grid, so blank space never gets a stray line and every line is
+    // guaranteed to sit under real text instead of drifting into it over the length of a page.
+    constexpr int kClearancePx = 4;
+    const int contentRight = renderer.getScreenWidth() - orientedMarginRight;
+    for (const auto& element : page.elements) {
+      int lineFontId = fontId;
+      switch (element->getTag()) {
+        case TAG_PageLine:
+          lineFontId = fontId;
+          break;
+        case TAG_PageHeader:
+          lineFontId = static_cast<const PageHeader&>(*element).getHeaderFontId();
+          break;
+        case TAG_PageSmallCaps:
+          lineFontId = static_cast<const PageSmallCaps&>(*element).getCompatFontId();
+          break;
+        default:
+          continue;
+      }
+      const int ascender = renderer.text.getFontAscenderSize(lineFontId);
+      // element->yPos is content-relative (PageLine::render() adds orientedMarginTop itself as yOffset) -
+      // add it back here to get the real screen Y, or every line lands orientedMarginTop px too high.
+      const int y = orientedMarginTop + element->yPos + ascender + kClearancePx + 2;
+      if (y >= lineTop && y < lineBottom) {
+        renderer.line.render(orientedMarginLeft, y, contentRight, y, true, LineRender::Style::Dotted);
+      }
+    }
+    return;
+  }
+  // Grid mode: 25% / 75% of content width so ~half the page sits between the guides
+  // (1/3–2/3 is too narrow on small XTE screens).
+  const int x1 = orientedMarginLeft + contentWidth / 4;
+  const int x2 = orientedMarginLeft + (contentWidth * 3) / 4;
+  // Dotted so the guides cue fixation without fighting body text on e-ink.
+  renderer.line.render(x1, lineTop, x1, lineBottom, true, LineRender::Style::Dotted);
+  renderer.line.render(x2, lineTop, x2, lineBottom, true, LineRender::Style::Dotted);
 }
 
 /**

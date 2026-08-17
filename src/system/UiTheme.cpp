@@ -22,8 +22,21 @@ constexpr int kBottomTabIconNudgeY = -3;
 constexpr int kPageHeaderTopPadding = 5;
 constexpr int kPageHeaderBottomPadding = 5;
 constexpr int kPageHeaderDividerThickness = 2;
+constexpr int kMenuBatteryRightMargin = 80;
+constexpr int kBottomMenuClockLeftMargin = 20;
 
 int x3ChromeAdjustment() { return gpio.deviceIsX3() ? 2 : 0; }
+
+void drawMenuClockAndBattery(const GfxRenderer& renderer, const int top, const bool showBatteryPercentage) {
+  const int batteryX = renderer.getScreenWidth() - kMenuBatteryRightMargin;
+  ScreenComponents::drawMenuClockAndBattery(renderer, batteryX, top, showBatteryPercentage);
+}
+
+void drawLeftClockAndRightBattery(const GfxRenderer& renderer, const int top, const bool showBatteryPercentage) {
+  ScreenComponents::drawMenuClock(renderer, kBottomMenuClockLeftMargin, top);
+  ScreenComponents::drawBattery(renderer, renderer.getScreenWidth() - kMenuBatteryRightMargin, top,
+                                showBatteryPercentage);
+}
 }  // namespace
 
 UiTheme& UiTheme::getInstance() {
@@ -108,11 +121,10 @@ void UiTheme::drawMainTabBar(const GfxRenderer& renderer, const int selectedInde
   }
 
   if (mainTabsAtBottom()) {
-    ScreenComponents::drawBattery(renderer, renderer.getScreenWidth() - 80, 10, showBatteryPercentage);
+    drawLeftClockAndRightBattery(renderer, 10, showBatteryPercentage);
     renderer.line.render(0, TOP_STATUS_HEIGHT, renderer.getScreenWidth(), TOP_STATUS_HEIGHT);
   } else {
-    ScreenComponents::drawBattery(renderer, renderer.getScreenWidth() - 80, renderer.getScreenHeight() - 30,
-                                  showBatteryPercentage);
+    drawMenuClockAndBattery(renderer, renderer.getScreenHeight() - 30, showBatteryPercentage);
   }
 }
 
@@ -142,6 +154,8 @@ int UiTheme::drawPageHeader(const GfxRenderer& renderer, const char* title, cons
 
 void UiTheme::drawButtonHints(const GfxRenderer& renderer, const int fontId, const char* btn1, const char* btn2,
                               const char* btn3, const char* btn4) const {
+  // Hide-button-hints is enforced inside UiRender::buttonHints (global policy).
+  // Hub chrome: when main tabs sit on the bottom row, they replace the hint bar.
   if (!mainTabsAtBottom()) {
     renderer.ui.buttonHints(fontId, btn1, btn2, btn3, btn4);
   }

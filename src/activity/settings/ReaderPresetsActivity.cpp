@@ -7,13 +7,13 @@
 
 #include <Arduino.h>
 #include <EpdFontFamily.h>
-#include <esp_heap_caps.h>
 
 #include <algorithm>
 #include <cstring>
 
 #include "../util/KeyboardEntryActivity.h"
 #include "GfxRenderer.h"
+#include "QuickActionsSettingsActivity.h"
 #include "ReaderFontSettingsDraw.h"
 #include "ReaderPresetEditorActivity.h"
 #include "state/ReaderPreset.h"
@@ -117,24 +117,7 @@ const char* buttonActionRowLabel(const int idx, const bool x3) {
   }
 }
 
-const char* readerButtonActionLabel(const uint8_t action) {
-  static const char* const kLabels[] = {"None",
-                                        "Page Next",
-                                        "Page Previous",
-                                        "Open Settings",
-                                        "Annotate",
-                                        "Dictionary",
-                                        "Page Refresh",
-                                        "Chapter Skip Next",
-                                        "Chapter Skip Previous",
-                                        "Bookmark",
-                                        "Table of Contents",
-                                        "Change Orientation"};
-  if (action >= SystemSetting::READER_BUTTON_ACTION_COUNT) {
-    return "None";
-  }
-  return kLabels[action];
-}
+const char* readerButtonActionLabel(const uint8_t action) { return SystemSetting::readerButtonActionLabel(action); }
 
 // Power Button is a single, short-press-only reader setting (physical Power button while reading has
 // no reader-configurable long-press - that's reserved at the hardware/system level) - a 9th row in
@@ -159,12 +142,11 @@ ReaderPresetsActivity::ReaderPresetsActivity(GfxRenderer& renderer, MappedInputM
 }
 
 void ReaderPresetsActivity::onEnter() {
-  Serial.printf("[%lu] [MEM] Free heap at ReaderPresetsActivity::onEnter(): %u bytes\n", millis(),
-               static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)));
   READER_PRESETS.load();
   const int screenH = renderer.getScreenHeight();
   const int listTop = mainHeaderDividerY();
-  const int contentBottom = INX_THEME.mainTabsAtBottom() ? mainContentBottom(renderer) : screenH - 60;
+  const int contentBottom = INX_THEME.mainTabsAtBottom() ? mainContentBottom(renderer) - kBottomButtonHintsHeight
+                                                         : screenH - 60;
   itemsPerPage_ = std::max(1, (contentBottom - listTop) / kListItemHeight);
   selectedRow_ = 0;
   scrollOffset_ = 0;
@@ -174,16 +156,17 @@ void ReaderPresetsActivity::onEnter() {
 
 void ReaderPresetsActivity::onExit() { exitActivity(); }
 
-// System section: 5 fixed rows - Text Anti-Aliasing, Refresh Frequency, Page Auto Turn, Image Quality,
-// Smart Refresh (Images). Pulled out of the per-book/per-preset SettingsDrawer (the "═══ System ═══"
-// and "═══ Image ═══" groups) into single global SystemSetting fields instead of per-book overrides.
-// Status Bar (Left/Middle/Right) is also a global field now (see statusBarLeft/Middle/Right on
-// SystemSetting) but stays UI-editable only from that same SettingsDrawer (opened while reading), not
-// duplicated here - so it's not listed as a row in this section. "Buttons" is its own top-level,
-// collapsible section (short/long press action for each of Up/Down/Left/Right - see ReaderButtonBindings
-// for the dispatch these configure), a sibling of System/XTC, sitting between them: System, Buttons,
-// XTC, Presets.
-constexpr int kSystemFixedRowCount = 5;
+// System section: 6 fixed rows - Text Anti-Aliasing, Refresh Frequency, Page Auto Turn, Image Quality,
+// Smart Refresh (Images), Quick Actions. Pulled out of the per-book/per-preset SettingsDrawer (the
+// "═══ System ═══" and "═══ Image ═══" groups) into single global SystemSetting fields instead of
+// per-book overrides. Status Bar (Left/Middle/Right) is also a global field now (see
+// statusBarLeft/Middle/Right on SystemSetting) but stays UI-editable only from that same SettingsDrawer
+// (opened while reading), not duplicated here - so it's not listed as a row in this section. "Buttons"
+// is its own top-level, collapsible section (short/long press action for each of Up/Down/Left/Right -
+// see ReaderButtonBindings for the dispatch these configure), a sibling of System/XTC, sitting between
+// them: System, Buttons, XTC, Presets. Quick Actions (row 6) opens QuickActionsSettingsActivity, a
+// checklist of which READER_BUTTON_ACTION values a button mapped to BTN_ACTION_QUICK_ACTIONS pops up.
+constexpr int kSystemFixedRowCount = 6;
 
 bool ReaderPresetsActivity::isSystemSettingRow(const int row) const {
   return systemExpanded_ && row > systemHeaderRow() && row <= systemHeaderRow() + kSystemFixedRowCount;
@@ -312,6 +295,10 @@ void ReaderPresetsActivity::render() {
       } else if (systemLocalRow == 5) {
         label = "  Smart Refresh (Images)";
         toggleChecked = READER_SETTINGS.readerSmartRefreshOnImages != 0;
+      } else if (systemLocalRow == 6) {
+        label = "  Quick Actions";
+        value = "Configure >";
+        isToggle = false;
       }
       renderer.text.render(ATKINSON_HYPERLEGIBLE_10_FONT_ID, 20, textY, label, isSelected ? 0 : 1);
       if (isToggle) {
@@ -442,6 +429,14 @@ void ReaderPresetsActivity::render() {
                          LineRender::Style::Dotted);
   }
   renderer.line.render(0, headerDividerY, screenW, headerDividerY, true);
+
+  if (INX_THEME.mainTabsAtBottom()) {
+    // Bottom-tabs mode moves the tab bar to the screen bottom, where the classic button-hints row normally
+    // goes, so redraw that same row just above the tab bar instead — matches CategorySettingsActivity.
+    const int hintsAreaTop = mainContentBottom(renderer) - kBottomButtonHintsHeight;
+    const int hintsY = hintsAreaTop + (kBottomButtonHintsHeight - 40) / 2;
+    renderer.ui.buttonHints(ATKINSON_HYPERLEGIBLE_10_FONT_ID, "\xC2\xAB System", "Open", "", "", hintsY);
+  }
 
   renderButtonHints(renderer, "\xC2\xAB Back", "Open", "", "");
 
@@ -720,6 +715,10 @@ void ReaderPresetsActivity::openEditor(int presetIndex) {
       new ReaderPresetEditorActivity(renderer, mappedInput, presetIndex, [this]() { subFinished_ = true; }));
 }
 
+void ReaderPresetsActivity::openQuickActionsScreen() {
+  enterNewActivity(new QuickActionsSettingsActivity(renderer, mappedInput, [this]() { subFinished_ = true; }));
+}
+
 void ReaderPresetsActivity::openRenameKeyboard(int presetIndex) {
   const std::string current = READER_PRESETS.nameOf(presetIndex);
   enterNewActivity(new KeyboardEntryActivity(
@@ -744,6 +743,10 @@ void ReaderPresetsActivity::activateSelectedRow() {
     if (systemLocalRow == 1 || systemLocalRow == 5) {
       changeSystemSetting(selectedRow_, 0);  // Text Anti-Aliasing / Smart Refresh: plain toggle, no popup
       render();
+      return;
+    }
+    if (systemLocalRow == 6) {
+      openQuickActionsScreen();
       return;
     }
     openSelectorForRow(selectedRow_);
@@ -839,17 +842,23 @@ void ReaderPresetsActivity::handleListInput() {
   }
 
   if (mappedInput.wasPressed(MenuNav::itemPrev())) {
-    if (selectedRow_ > 0) {
-      selectedRow_--;
+    const int rows = rowCount();
+    if (rows > 0) {
+      selectedRow_ = (selectedRow_ - 1 + rows) % rows;
       if (selectedRow_ < scrollOffset_) scrollOffset_ = selectedRow_;
+      if (selectedRow_ >= scrollOffset_ + itemsPerPage_) scrollOffset_ = selectedRow_ - itemsPerPage_ + 1;
+      scrollOffset_ = std::max(0, std::min(scrollOffset_, std::max(0, rows - itemsPerPage_)));
       render();
     }
     return;
   }
   if (mappedInput.wasPressed(MenuNav::itemNext())) {
-    if (selectedRow_ < rowCount() - 1) {
-      selectedRow_++;
+    const int rows = rowCount();
+    if (rows > 0) {
+      selectedRow_ = (selectedRow_ + 1) % rows;
+      if (selectedRow_ < scrollOffset_) scrollOffset_ = selectedRow_;
       if (selectedRow_ >= scrollOffset_ + itemsPerPage_) scrollOffset_ = selectedRow_ - itemsPerPage_ + 1;
+      scrollOffset_ = std::max(0, std::min(scrollOffset_, std::max(0, rows - itemsPerPage_)));
       render();
     }
     return;

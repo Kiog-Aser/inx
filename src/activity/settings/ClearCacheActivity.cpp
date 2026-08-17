@@ -37,12 +37,12 @@ void ClearCacheActivity::taskTrampoline(void* param) {
 
 void ClearCacheActivity::onEnter() {
   ActivityWithSubactivity::onEnter();
-
+  
   renderingMutex = xSemaphoreCreateMutex();
   state = WARNING;
   selectedGroup = 0;
   updateRequired = true;
-
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
   xTaskCreate(&ClearCacheActivity::taskTrampoline, "ClearCacheActivityTask", 4096, this, 1, &displayTaskHandle);
 }
 
@@ -260,18 +260,14 @@ void ClearCacheActivity::clearCache() {
 void ClearCacheActivity::loop() {
   if (state == WARNING) {
     if (mappedInput.wasPressed(MenuNav::itemPrev())) {
-      if (selectedGroup > 0) {
-        selectedGroup--;
-        updateRequired = true;
-      }
+      selectedGroup = (selectedGroup + GROUP_COUNT) % (GROUP_COUNT + 1);
+      updateRequired = true;
       return;
     }
 
     if (mappedInput.wasPressed(MenuNav::itemNext())) {
-      if (selectedGroup < GROUP_COUNT) {
-        selectedGroup++;
-        updateRequired = true;
-      }
+      selectedGroup = (selectedGroup + 1) % (GROUP_COUNT + 1);
+      updateRequired = true;
       return;
     }
 

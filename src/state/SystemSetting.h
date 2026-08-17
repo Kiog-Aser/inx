@@ -147,6 +147,7 @@ class SystemSetting {
     LEFT_RIGHT_BACK_CONFIRM = 1,  ///< Prev/Next on left, Back/Confirm on right
     LEFT_BACK_CONFIRM_RIGHT = 2,  ///< Prev on left, Back/Confirm in middle, Next on right
     BACK_CONFIRM_RIGHT_LEFT = 3,  ///< Back/Confirm on right, Prev/Next on left
+    LEFT_RIGHT_CONFIRM_BACK = 4,  ///< Prev/Next on left, Confirm/Back on right
     FRONT_BUTTON_LAYOUT_COUNT
   };
 
@@ -308,8 +309,15 @@ class SystemSetting {
     BTN_ACTION_BOOKMARK,
     BTN_ACTION_TABLE_OF_CONTENTS,
     BTN_ACTION_CHANGE_ORIENTATION,
+    BTN_ACTION_APPLY_PRESET,
+    BTN_ACTION_QUICK_ACTIONS,
+    BTN_ACTION_FOOTNOTE,
     READER_BUTTON_ACTION_COUNT
   };
+
+  /** Human-readable label for a READER_BUTTON_ACTION value - shared by the button-action pickers in
+   *  ReaderPresetsActivity, the Quick Actions checklist screen, and the in-reader quick-actions popup. */
+  static const char* readerButtonActionLabel(uint8_t action);
 
   /**
    * @brief Battery percentage display options
@@ -391,6 +399,8 @@ class SystemSetting {
   uint8_t sleepClockRefreshInterval = CLOCK_REFRESH_OFF;  ///< Legacy settings slot; Date Time is X3-only
   /** UTC offset in 15-minute steps, biased by +12h. 0=UTC-12:00, 80=UTC+08:00, 104=UTC+14:00. */
   uint8_t timeZoneQuarterOffset = 80;
+  /** X3 only: show the ambient clock (ScreenComponents::drawMenuClock) in the tab-bar chrome. */
+  uint8_t showMenuClock = 1;
 
   uint8_t shortPwrBtn = PAGE_REFRESH;  ///< Short power button behavior
 
@@ -426,6 +436,8 @@ class SystemSetting {
   uint8_t libraryMode = LIBRARY_GRID;              ///< Library browser display mode
   uint8_t libraryViewMode = LIBRARY_VIEW_FOLDERS;  ///< Last Library browser content view
   uint8_t libraryShelfEnabled = 0;                 ///< Allow cover shelf view in Library
+  /** Hide on-screen button-hint chrome everywhere (hub, settings, reader overlays, side buttons). */
+  uint8_t hideButtonHints = 0;
   /** How many recent books to show on the Recent hub (1–8). */
   uint8_t recentVisibleCount = 9;
   /** Library: 0 = folders and books A-Z only; 1 = use librarySortMode (favorites / groups / reading / tags). */

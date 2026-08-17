@@ -59,7 +59,7 @@ class BookMetadataCache {
 
  private:
   std::string cachePath;
-  size_t lutOffset;
+  uint32_t lutOffset;
   uint16_t spineCount;
   uint16_t tocCount;
   uint16_t cssCount;
@@ -89,7 +89,6 @@ class BookMetadataCache {
   SpineEntry readSpineEntry(FsFile& file) const;
   TocEntry readTocEntry(FsFile& file) const;
   CssEntry readCssEntry(FsFile& file) const;
-  int16_t findFirstTocIndexForSpine(uint16_t spineIndex);
 
  public:
   BookMetadata coreMetadata;
