@@ -310,6 +310,8 @@ class ChapterHtmlSlimParser {
   void finalizeOpenBorderBoxesForPageBreak();
   void restartOpenBorderBoxesAfterPageBreak();
   void addCenteredDivider(const char* text);
+  /** Scene break without leftover markup glyphs (Markdown/AsciiDoc `==` / `---` underlines). */
+  void addQuietSceneBreak();
   void addHorizontalRule(const std::string& tagLower = "hr", const std::string& classAttr = "",
                          const std::string& idAttr = "", const std::string& styleAttr = "");
   /** Emits a horizontal border rule (full content width placeholder) and returns it so its width can be

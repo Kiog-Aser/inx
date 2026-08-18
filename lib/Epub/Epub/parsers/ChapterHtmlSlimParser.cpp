@@ -387,32 +387,133 @@ std::string trimAsciiWhitespace(std::string value) {
   return std::string(first, last);
 }
 
-bool isSceneBreakMarker(const std::string& text, std::string* markerText) {
+enum class SceneBreakKind { None, Literary, Markup };
+
+bool isLiteraryBreakCp(const uint32_t cp) {
+  return cp == '.' || cp == '*' || cp == 0x2022 || cp == 0x00B7;
+}
+
+bool isMarkupBreakCp(const uint32_t cp) {
+  return cp == '=' || cp == '-' || cp == '_' || cp == '~' || cp == 0x2013 || cp == 0x2014;
+}
+
+SceneBreakKind classifySceneBreak(const std::string& text) {
   const std::string trimmed = trimAsciiWhitespace(text);
   if (trimmed.empty()) {
-    return false;
+    return SceneBreakKind::None;
   }
 
   int markerCount = 0;
+  bool markup = false;
   const unsigned char* p = reinterpret_cast<const unsigned char*>(trimmed.c_str());
   const unsigned char* const end = p + trimmed.size();
   while (p < end) {
     const uint32_t cp = utf8NextCodepoint(&p);
-    if (cp == '.' || cp == '*' || cp == 0x2022) {
-      ++markerCount;
-      continue;
-    }
     if (cp == ' ' || cp == '\t') {
       continue;
     }
-    return false;
+    if (isLiteraryBreakCp(cp)) {
+      ++markerCount;
+      continue;
+    }
+    if (isMarkupBreakCp(cp)) {
+      markup = true;
+      ++markerCount;
+      continue;
+    }
+    return SceneBreakKind::None;
   }
 
-  if (markerCount == 0 || markerCount > 6) {
+  if (markerCount == 0) {
+    return SceneBreakKind::None;
+  }
+  if (markup) {
+    return markerCount >= 2 ? SceneBreakKind::Markup : SceneBreakKind::None;
+  }
+  if (markerCount > 6) {
+    return SceneBreakKind::None;
+  }
+  return SceneBreakKind::Literary;
+}
+
+/** Strips a Markdown ATX (`##`) or AsciiDoc (`==`) heading prefix. Returns true when a prefix was removed
+ *  and title text remains. A line that is only markers is left unchanged so classifySceneBreak can handle it. */
+bool stripHeadingMarkupPrefix(std::string& line) {
+  std::string trimmed = trimAsciiWhitespace(line);
+  if (trimmed.empty()) {
     return false;
   }
-  if (markerText) *markerText = trimmed;
+  size_t i = 0;
+  const char mark = trimmed[0];
+  if (mark != '#' && mark != '=') {
+    return false;
+  }
+  while (i < trimmed.size() && trimmed[i] == mark) {
+    ++i;
+  }
+  const size_t n = i;
+  if (mark == '#' && (n < 1 || n > 6)) {
+    return false;
+  }
+  if (mark == '=' && (n < 2 || n > 3)) {
+    return false;
+  }
+  if (i < trimmed.size() && (trimmed[i] == ' ' || trimmed[i] == '\t')) {
+    while (i < trimmed.size() && (trimmed[i] == ' ' || trimmed[i] == '\t')) {
+      ++i;
+    }
+  } else if (!(mark == '=' && i < trimmed.size() && std::isalnum(static_cast<unsigned char>(trimmed[i])) != 0)) {
+    return false;
+  }
+  if (i >= trimmed.size()) {
+    return false;
+  }
+  line = trimmed.substr(i);
   return true;
+}
+
+/** Drops separator-only lines and heading-underline leftovers from a text node. Empty result means the
+ *  whole node was markup (caller should emit a scene break). */
+std::string cleanChapterMarkupText(const std::string& text, const bool inHeader, SceneBreakKind* leftoverBreak) {
+  if (leftoverBreak) {
+    *leftoverBreak = SceneBreakKind::None;
+  }
+  std::string out;
+  size_t start = 0;
+  bool sawContent = false;
+  while (start <= text.size()) {
+    const size_t nl = text.find_first_of("\r\n", start);
+    const size_t end = nl == std::string::npos ? text.size() : nl;
+    std::string line = text.substr(start, end - start);
+    if (nl != std::string::npos && text[nl] == '\r' && nl + 1 < text.size() && text[nl + 1] == '\n') {
+      start = nl + 2;
+    } else if (nl != std::string::npos) {
+      start = nl + 1;
+    } else {
+      start = text.size() + 1;
+    }
+
+    const SceneBreakKind kind = classifySceneBreak(line);
+    if (kind != SceneBreakKind::None) {
+      if (leftoverBreak && *leftoverBreak == SceneBreakKind::None) {
+        *leftoverBreak = kind;
+      }
+      continue;
+    }
+    if (inHeader || !sawContent) {
+      stripHeadingMarkupPrefix(line);
+    }
+    line = trimAsciiWhitespace(line);
+    if (line.empty()) {
+      continue;
+    }
+    if (!out.empty()) {
+      out += '\n';
+    }
+    out += line;
+    sawContent = true;
+  }
+  return out;
 }
 
 }  // namespace
@@ -920,6 +1021,31 @@ void ChapterHtmlSlimParser::flushPartWordBuffer() {
     dropCapConsumeWholeContainer = false;
     dropCapLineCount = 3;
     return;
+  }
+
+  if (currentTextBlock && currentTextBlock->isEmpty()) {
+    std::string word(partWordBuffer, static_cast<size_t>(partWordBufferIndex));
+    const SceneBreakKind kind = classifySceneBreak(word);
+    if (kind != SceneBreakKind::None) {
+      partWordBufferIndex = 0;
+      if (!inHeader) {
+        if (kind == SceneBreakKind::Literary) {
+          addCenteredDivider("\xC2\xB7 \xC2\xB7 \xC2\xB7");
+        } else {
+          addQuietSceneBreak();
+        }
+      }
+      return;
+    }
+    if (stripHeadingMarkupPrefix(word)) {
+      if (word.size() >= MAX_WORD_SIZE) {
+        partWordBufferIndex = 0;
+        return;
+      }
+      memcpy(partWordBuffer, word.c_str(), word.size());
+      partWordBufferIndex = static_cast<int>(word.size());
+      partWordBuffer[partWordBufferIndex] = '\0';
+    }
   }
 
   const bool cssBoldActive = !cssFontStyleStack.empty() && cssFontStyleStack.back().bold;
@@ -2037,15 +2163,29 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
   }
   if (self->skipUntilDepth < self->depth) return;
 
-  std::string sceneBreakText;
-  if ((!self->currentTextBlock || self->currentTextBlock->isEmpty()) &&
-      isSceneBreakMarker(std::string(reinterpret_cast<const char*>(s), static_cast<size_t>(len)), &sceneBreakText)) {
-    self->addCenteredDivider(sceneBreakText.c_str());
-    return;
+  const bool blockEmpty = !self->currentTextBlock || self->currentTextBlock->isEmpty();
+  std::string cleaned;
+  const char* chars = reinterpret_cast<const char*>(s);
+  int charLen = len;
+  if (blockEmpty && !self->inDropCap) {
+    SceneBreakKind leftover = SceneBreakKind::None;
+    cleaned = cleanChapterMarkupText(std::string(chars, static_cast<size_t>(len)), self->inHeader, &leftover);
+    if (cleaned.empty()) {
+      if (!self->inHeader) {
+        if (leftover == SceneBreakKind::Literary) {
+          self->addCenteredDivider("\xC2\xB7 \xC2\xB7 \xC2\xB7");
+        } else if (leftover == SceneBreakKind::Markup) {
+          self->addQuietSceneBreak();
+        }
+      }
+      return;
+    }
+    chars = cleaned.c_str();
+    charLen = static_cast<int>(cleaned.size());
   }
 
-  for (int i = 0; i < len; i++) {
-    if (isWhitespace(s[i])) {
+  for (int i = 0; i < charLen; i++) {
+    if (isWhitespace(chars[i])) {
       if (!self->inDropCap) {
         self->flushPartWordBuffer();
         self->nextWordJoinsPrevious = false;
@@ -2053,7 +2193,8 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
       continue;
     }
 
-    if (s[i] == (XML_Char)0xEF && i + 2 < len && s[i + 1] == (XML_Char)0xBB && s[i + 2] == (XML_Char)0xBF) {
+    if (chars[i] == static_cast<char>(0xEF) && i + 2 < charLen && chars[i + 1] == static_cast<char>(0xBB) &&
+        chars[i + 2] == static_cast<char>(0xBF)) {
       i += 2;
       continue;
     }
@@ -2076,7 +2217,7 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
     if (self->partWordBufferIndex >= MAX_WORD_SIZE) {
       continue;
     }
-    self->partWordBuffer[self->partWordBufferIndex++] = s[i];
+    self->partWordBuffer[self->partWordBufferIndex++] = chars[i];
 
     if (self->inDropCap && endsWithCompleteUtf8Codepoint(self->partWordBuffer, self->partWordBufferIndex) &&
         countUtf8Codepoints(self->partWordBuffer, self->partWordBufferIndex) >=
@@ -2462,11 +2603,19 @@ void ChapterHtmlSlimParser::addCenteredDivider(const char* text) {
   applyVerticalSpacing(spacer);
 
   auto divider = std::make_shared<ParsedText>(TextBlock::CENTER_ALIGN, false, false, false, false);
-  divider->addWord(text, EpdFontFamily::BOLD, false);
+  divider->addWord(text, EpdFontFamily::REGULAR, false);
   divider->layoutAndExtractLines(renderer, activeFontId, viewportWidth,
                                  [this](TextBlock&& textBlock) { addLineToPage(std::move(textBlock)); });
 
   applyVerticalSpacing(spacer);
+}
+
+void ChapterHtmlSlimParser::addQuietSceneBreak() {
+  if (currentTextBlock && !currentTextBlock->isEmpty()) {
+    makePages();
+  }
+  const int lineHeight = renderer.text.getLineHeight(fontId) * lineCompression;
+  applyVerticalSpacing(std::max(8, lineHeight));
 }
 
 void ChapterHtmlSlimParser::addHorizontalRule(const std::string& tagLower, const std::string& classAttr,
