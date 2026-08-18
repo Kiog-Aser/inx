@@ -17,10 +17,51 @@
 #include "system/Fonts.h"
 #include "system/MappedInputManager.h"
 
+#include <Epub/Section.h>
+
 namespace {
 
 constexpr unsigned long kChordHoldMs = 600;
 constexpr int kHighlightLatticeStepPx = 2;
+
+int cmpLoc(const int s1, const int p1, const size_t w1, const int s2, const int p2, const size_t w2) {
+  if (s1 != s2) {
+    return s1 < s2 ? -1 : 1;
+  }
+  if (p1 != p2) {
+    return p1 < p2 ? -1 : 1;
+  }
+  if (w1 != w2) {
+    return w1 < w2 ? -1 : 1;
+  }
+  return 0;
+}
+
+HighlightSpan normalizedSpan(HighlightSpan span) {
+  if (cmpLoc(span.startSpine, span.startPage, span.startWord, span.endSpine, span.endPage, span.endWord) > 0) {
+    std::swap(span.startSpine, span.endSpine);
+    std::swap(span.startPage, span.endPage);
+    std::swap(span.startWord, span.endWord);
+  }
+  return span;
+}
+
+bool fillWordsForPage(EpubActivity& act, const int spine, const int page, std::vector<PageWordHit>& out) {
+  out.clear();
+  if (!act.epub) {
+    return false;
+  }
+  auto pageObj = Section::loadCachedPage(act.epub->getCachePath(), spine, page);
+  if (!pageObj) {
+    return false;
+  }
+  const ViewportInfo info = act.calculateViewport();
+  const int fontId = act.bookSettings.getReaderFontId();
+  const int headerFontId = FontManager::getNextFont(fontId);
+  buildPageWordIndex(*pageObj, act.renderer, fontId, headerFontId, info.totalMarginLeft, info.totalMarginTop, out,
+                     nullptr, false);
+  return !out.empty();
+}
 
 }  // namespace
 
@@ -47,7 +88,7 @@ void EpubAnnotationUi::clearWordIndexCache() {
 
 void EpubAnnotationUi::clearSessionAndCapture() {
   annotations_.clearSession();
-  std::vector<std::pair<size_t, size_t>>().swap(pendingSpans_);
+  std::vector<HighlightSpan>().swap(pendingSpans_);
   for (auto& ch : captureChunks_) {
     ch.reset();
   }
@@ -83,17 +124,14 @@ bool EpubAnnotationUi::hasSaveableContent() const {
   if (!pendingSpans_.empty()) {
     return true;
   }
-  if (!selectingStarted_ || words_.empty()) {
-    return false;
-  }
-  const size_t lo = std::min(anchor_, focus_);
-  const size_t hi = std::max(anchor_, focus_);
-  return lo <= hi;
+  return selectingStarted_;
 }
 
 void EpubAnnotationUi::resetSelectionToStart(EpubActivity& act) {
   pendingSpans_.clear();
   selectingStarted_ = false;
+  selAnchorSpine_ = -1;
+  selAnchorPage_ = -1;
   focus_ = 0;
   anchor_ = 0;
   act.updateRequired = true;
@@ -109,6 +147,8 @@ void EpubAnnotationUi::clearAllStoredHighlightsOnCurrentPage(EpubActivity& act) 
   selectingStarted_ = false;
   focus_ = 0;
   anchor_ = 0;
+  selAnchorSpine_ = -1;
+  selAnchorPage_ = -1;
   // Force full word-index rebuild so merge/geometry cannot reuse state tied to the deleted highlights.
   clearWordIndexCache();
   // Full redraw clears lattice from the framebuffer; then re-capture for annotation repaint path.
@@ -122,16 +162,28 @@ void EpubAnnotationUi::clearAllStoredHighlightsOnCurrentPage(EpubActivity& act) 
   act.updateRequired = true;
 }
 
-void EpubAnnotationUi::normalizeSpans(std::vector<std::pair<size_t, size_t>>& spans) {
+void EpubAnnotationUi::normalizeSpans(std::vector<HighlightSpan>& spans) {
   if (spans.empty()) {
     return;
   }
-  std::sort(spans.begin(), spans.end());
+  for (HighlightSpan& span : spans) {
+    span = normalizedSpan(span);
+  }
+  std::sort(spans.begin(), spans.end(), [](const HighlightSpan& a, const HighlightSpan& b) {
+    const int c = cmpLoc(a.startSpine, a.startPage, a.startWord, b.startSpine, b.startPage, b.startWord);
+    if (c != 0) {
+      return c < 0;
+    }
+    return cmpLoc(a.endSpine, a.endPage, a.endWord, b.endSpine, b.endPage, b.endWord) < 0;
+  });
   size_t write = 0;
-  auto cur = spans[0];
+  HighlightSpan cur = spans[0];
   for (size_t i = 1; i < spans.size(); ++i) {
-    if (spans[i].first <= cur.second + 1) {
-      cur.second = std::max(cur.second, spans[i].second);
+    const bool samePage = cur.startSpine == cur.endSpine && cur.startPage == cur.endPage &&
+                          spans[i].startSpine == spans[i].endSpine && spans[i].startPage == spans[i].endPage &&
+                          cur.startSpine == spans[i].startSpine && cur.startPage == spans[i].startPage;
+    if (samePage && spans[i].startWord <= cur.endWord + 1) {
+      cur.endWord = std::max(cur.endWord, spans[i].endWord);
     } else {
       spans[write++] = cur;
       cur = spans[i];
@@ -156,6 +208,8 @@ void EpubAnnotationUi::enter(EpubActivity& act) {
   annNavRepeatDir_ = -1;
   anchor_ = 0;
   focus_ = 0;
+  selAnchorSpine_ = -1;
+  selAnchorPage_ = -1;
   // Build word index first, then capture the framebuffer. Allocating the 48k capture before the word index
   // (many strings + PageWordHit) spikes heap usage and can abort() on OOM on ESP32.
   prepareWordGeometry(act);
@@ -179,7 +233,7 @@ void EpubAnnotationUi::exit(EpubActivity& act) {
   // swap, not .clear() - .clear() empties the contents but keeps the heap capacity reserved for
   // reuse; a page with many highlights/words can grow these well past what's needed once the UI
   // closes (same fix as EpubDictionaryUi's releaseDefinitionMemory()).
-  std::vector<std::pair<size_t, size_t>>().swap(pendingSpans_);
+  std::vector<HighlightSpan>().swap(pendingSpans_);
   std::vector<std::pair<size_t, size_t>>().swap(storedRanges_);
   std::vector<PageWordHit>().swap(words_);
   std::vector<size_t>().swap(lineFirst_);
@@ -198,6 +252,11 @@ void EpubAnnotationUi::exit(EpubActivity& act) {
 }
 
 bool EpubAnnotationUi::tryNavigationHoldRepeat(EpubActivity& act) {
+  const bool atStart = words_.empty() || focus_ == 0;
+  const bool atEnd = words_.empty() || (!words_.empty() && focus_ == words_.size() - 1);
+  const bool leftPress = act.mappedInput.wasPressed(MappedInputManager::Button::Left);
+  const bool rightPress = act.mappedInput.wasPressed(MappedInputManager::Button::Right);
+
   WordOverlayNav::EdgeState edge{annLastNavEdgeMs_, annLastNavEdgeDir_};
   const int nav = WordOverlayNav::handleDpad(
       act.mappedInput, edge, annNavRepeatDir_, annNavRepeatNextMs_, millis(),
@@ -205,8 +264,17 @@ bool EpubAnnotationUi::tryNavigationHoldRepeat(EpubActivity& act) {
       [this](const int delta, const bool wrap) { moveFocusLine(delta, wrap); });
   annLastNavEdgeMs_ = edge.lastMs;
   annLastNavEdgeDir_ = edge.lastDir;
-  if (nav == 2) {
+  if (nav >= 2) {
     act.updateRequired = true;
+  }
+  if (nav == 2 && selectingStarted_) {
+    if (leftPress && atStart && pageTurnFromHighlight(act, false)) {
+      annNavRepeatNextMs_ = millis() + WordOverlayNav::kRepeatInitialMs;
+      act.updateRequired = true;
+    } else if (rightPress && atEnd && pageTurnFromHighlight(act, true)) {
+      annNavRepeatNextMs_ = millis() + WordOverlayNav::kRepeatInitialMs;
+      act.updateRequired = true;
+    }
   }
   return nav != 0;
 }
@@ -217,12 +285,126 @@ std::string EpubAnnotationUi::extractRangeText(const size_t anchorFlat, const si
   }
   const size_t lo = std::min(anchorFlat, focusFlat);
   const size_t hi = std::max(anchorFlat, focusFlat);
-  std::string out;
-  for (size_t i = lo; i <= hi && i < words_.size(); ++i) {
-    if (!out.empty()) {
-      out += ' ';
+  size_t glo = lo;
+  size_t ghi = lo;
+  size_t hlo = hi;
+  size_t hhi = hi;
+  expandHyphenJoinRange(words_, lo, glo, ghi);
+  expandHyphenJoinRange(words_, hi, hlo, hhi);
+  return joinedHyphenRangeText(words_, glo, hhi, false);
+}
+
+HighlightSpan EpubAnnotationUi::liveSelectionSpan(const EpubActivity& act) const {
+  HighlightSpan span;
+  span.startSpine = selAnchorSpine_ >= 0 ? selAnchorSpine_ : act.currentSpineIndex;
+  span.startPage = selAnchorPage_ >= 0 ? selAnchorPage_ : (act.section ? act.section->currentPage : 0);
+  span.startWord = anchor_;
+  span.endSpine = act.currentSpineIndex;
+  span.endPage = act.section ? act.section->currentPage : 0;
+  span.endWord = focus_;
+  return normalizedSpan(span);
+}
+
+void EpubAnnotationUi::expandSpanHyphenOnCurrentPage(HighlightSpan& span) const {
+  if (words_.empty()) {
+    return;
+  }
+  const size_t last = words_.size() - 1;
+  if (span.startSpine == wordIndexCacheSpine_ && span.startPage == wordIndexCachePage_) {
+    size_t glo = 0;
+    size_t ghi = 0;
+    expandHyphenJoinRange(words_, std::min(span.startWord, last), glo, ghi);
+    span.startWord = glo;
+  }
+  if (span.endSpine == wordIndexCacheSpine_ && span.endPage == wordIndexCachePage_) {
+    size_t glo = 0;
+    size_t ghi = 0;
+    expandHyphenJoinRange(words_, std::min(span.endWord, last), glo, ghi);
+    span.endWord = ghi;
+  }
+}
+
+std::string EpubAnnotationUi::extractSpanText(EpubActivity& act, const HighlightSpan& raw) const {
+  const HighlightSpan span = normalizedSpan(raw);
+  if (span.startSpine == span.endSpine && span.startPage == span.endPage) {
+    if (act.section && act.currentSpineIndex == span.startSpine && act.section->currentPage == span.startPage &&
+        !words_.empty()) {
+      return extractRangeText(span.startWord, span.endWord);
     }
-    out += words_[i].text;
+    std::vector<PageWordHit> pageWords;
+    if (!fillWordsForPage(act, span.startSpine, span.startPage, pageWords)) {
+      return {};
+    }
+    const size_t last = pageWords.size() - 1;
+    size_t glo = 0;
+    size_t ghi = 0;
+    size_t hlo = 0;
+    size_t hhi = 0;
+    expandHyphenJoinRange(pageWords, std::min(span.startWord, last), glo, ghi);
+    expandHyphenJoinRange(pageWords, std::min(span.endWord, last), hlo, hhi);
+    return joinedHyphenRangeText(pageWords, glo, hhi, false);
+  }
+
+  std::string out;
+  bool lastHyphenJoin = false;
+  int s = span.startSpine;
+  int p = span.startPage;
+  const int maxSpine = act.epub ? act.epub->getSpineItemsCount() : span.endSpine + 1;
+  for (int guard = 0; guard < 400; ++guard) {
+    std::vector<PageWordHit> pageWords;
+    if (fillWordsForPage(act, s, p, pageWords)) {
+      const size_t last = pageWords.size() - 1;
+      size_t lo = 0;
+      size_t hi = last;
+      if (s == span.startSpine && p == span.startPage) {
+        lo = std::min(span.startWord, last);
+      }
+      if (s == span.endSpine && p == span.endPage) {
+        hi = std::min(span.endWord, last);
+      }
+      if (lo <= hi) {
+        size_t glo = lo;
+        size_t ghi = lo;
+        size_t hlo = hi;
+        size_t hhi = hi;
+        expandHyphenJoinRange(pageWords, lo, glo, ghi);
+        expandHyphenJoinRange(pageWords, hi, hlo, hhi);
+        const std::string slice = joinedHyphenRangeText(pageWords, glo, hhi, false);
+        if (!slice.empty()) {
+          if (!out.empty()) {
+            if (lastHyphenJoin) {
+              if (out.back() == '-') {
+                out.pop_back();
+              }
+            } else {
+              out += ' ';
+            }
+          }
+          out += slice;
+        }
+        lastHyphenJoin = pageWords[hhi].hyphenJoinNext;
+      } else {
+        lastHyphenJoin = false;
+      }
+    } else {
+      lastHyphenJoin = false;
+    }
+
+    if (s == span.endSpine && p == span.endPage) {
+      break;
+    }
+    if (!act.epub) {
+      break;
+    }
+    if (Section::loadCachedPage(act.epub->getCachePath(), s, p + 1)) {
+      ++p;
+      continue;
+    }
+    ++s;
+    p = 0;
+    if (s > span.endSpine || s >= maxSpine) {
+      break;
+    }
   }
   return out;
 }
@@ -278,24 +460,16 @@ void EpubAnnotationUi::updateStoredRangesForPage(const EpubActivity& act) {
 
 void EpubAnnotationUi::clampSelectionToValidWords() {
   if (words_.empty()) {
-    pendingSpans_.clear();
+    // Image-only (or empty) page during a cross-page selection: keep the pending/anchor state.
     return;
   }
   const size_t last = words_.size() - 1;
   focus_ = std::min(focus_, last);
-  if (selectingStarted_) {
+  const bool anchorOnThisPage =
+      selectingStarted_ && selAnchorSpine_ == wordIndexCacheSpine_ && selAnchorPage_ == wordIndexCachePage_;
+  if (anchorOnThisPage) {
     anchor_ = std::min(anchor_, last);
   }
-  for (auto& pr : pendingSpans_) {
-    pr.first = std::min(pr.first, last);
-    pr.second = std::min(pr.second, last);
-    if (pr.first > pr.second) {
-      std::swap(pr.first, pr.second);
-    }
-  }
-  pendingSpans_.erase(std::remove_if(pendingSpans_.begin(), pendingSpans_.end(),
-                                     [](const std::pair<size_t, size_t>& p) { return p.first > p.second; }),
-                      pendingSpans_.end());
 }
 
 void EpubAnnotationUi::prepareWordGeometry(EpubActivity& act) {
@@ -444,23 +618,53 @@ void EpubAnnotationUi::drawStoredOverlay(EpubActivity& act) {
   act.renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }
 
+void EpubAnnotationUi::drawSpanOnCurrentPage(EpubActivity& act, const HighlightSpan& raw, const bool expandHyphen) {
+  if (words_.empty() || !act.section) {
+    return;
+  }
+  HighlightSpan span = normalizedSpan(raw);
+  if (expandHyphen) {
+    expandSpanHyphenOnCurrentPage(span);
+  }
+  const int cs = act.currentSpineIndex;
+  const int cp = act.section->currentPage;
+  if (cmpLoc(cs, cp, 0, span.startSpine, span.startPage, 0) < 0) {
+    return;
+  }
+  if (cmpLoc(cs, cp, 0, span.endSpine, span.endPage, 0) > 0) {
+    return;
+  }
+  const size_t last = words_.size() - 1;
+  size_t lo = 0;
+  size_t hi = last;
+  if (cs == span.startSpine && cp == span.startPage) {
+    lo = std::min(span.startWord, last);
+  }
+  if (cs == span.endSpine && cp == span.endPage) {
+    hi = std::min(span.endWord, last);
+  }
+  if (lo > hi) {
+    return;
+  }
+  drawLatticeHighlightForWordIndexRange(act, lo, hi);
+}
+
 void EpubAnnotationUi::drawHighlights(EpubActivity& act) {
   if (!mode_ || words_.empty()) {
     return;
   }
   for (const auto& pr : pendingSpans_) {
-    if (pr.first < words_.size() && pr.second < words_.size() && pr.first <= pr.second) {
-      drawLatticeHighlightForWordIndexRange(act, pr.first, pr.second);
-    }
+    drawSpanOnCurrentPage(act, pr, true);
   }
   if (selectingStarted_) {
-    const size_t lo = std::min(anchor_, focus_);
-    const size_t hi = std::max(anchor_, focus_);
-    drawLatticeHighlightForWordIndexRange(act, lo, hi);
+    drawSpanOnCurrentPage(act, liveSelectionSpan(act), true);
     return;
   }
   if (focus_ < words_.size()) {
-    drawLatticeHighlightForWordIndexRange(act, focus_, focus_);
+    size_t lo = focus_;
+    size_t hi = focus_;
+    expandHyphenJoinRange(words_, focus_, lo, hi);
+    drawLatticeHighlightForWordIndexRange(act, lo, hi);
   }
 }
 
@@ -478,6 +682,41 @@ void EpubAnnotationUi::drawUiOverlay(EpubActivity& act) {
   act.renderer.ui.sideButtonHints(ATKINSON_HYPERLEGIBLE_10_FONT_ID, "Reset", "Up", "Down");
   act.renderer.setOrientation(o);
   act.renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+}
+
+bool EpubAnnotationUi::canPageTurnFromHighlight(EpubActivity& act, const bool forward) const {
+  if (!act.epub || !act.section) {
+    return false;
+  }
+  if (forward) {
+    if (act.section->currentPage + 1 < act.section->pageCount) {
+      return true;
+    }
+    return act.currentSpineIndex + 1 < act.epub->getSpineItemsCount();
+  }
+  if (act.section->currentPage > 0) {
+    return true;
+  }
+  return act.currentSpineIndex > 0;
+}
+
+bool EpubAnnotationUi::pageTurnFromHighlight(EpubActivity& act, const bool forward) {
+  if (!canPageTurnFromHighlight(act, forward)) {
+    return false;
+  }
+  suppressOverlayDraw_ = true;
+  act.pageTurn(forward);
+  act.renderScreen(true);
+  suppressOverlayDraw_ = false;
+  captureFramebuffer(act);
+  if (words_.empty()) {
+    focus_ = 0;
+  } else if (forward) {
+    focus_ = 0;
+  } else {
+    focus_ = words_.size() - 1;
+  }
+  return true;
 }
 
 void EpubAnnotationUi::moveFocusWord(const int delta) {
@@ -518,13 +757,13 @@ void EpubAnnotationUi::handleInput(EpubActivity& act) {
     if (!selectingStarted_) {
       selectingStarted_ = true;
       anchor_ = focus_;
+      selAnchorSpine_ = act.currentSpineIndex;
+      selAnchorPage_ = act.section ? act.section->currentPage : 0;
     } else {
-      const size_t lo = std::min(anchor_, focus_);
-      const size_t hi = std::max(anchor_, focus_);
-      if (!words_.empty() && lo <= hi) {
-        pendingSpans_.push_back({lo, std::min(hi, words_.size() - 1)});
-      }
+      pendingSpans_.push_back(liveSelectionSpan(act));
       selectingStarted_ = false;
+      selAnchorSpine_ = -1;
+      selAnchorPage_ = -1;
     }
     act.updateRequired = true;
     return;
@@ -535,13 +774,12 @@ void EpubAnnotationUi::handleInput(EpubActivity& act) {
 }
 
 void EpubAnnotationUi::saveToStorage(EpubActivity& act) {
-  std::vector<std::pair<size_t, size_t>> spans = pendingSpans_;
-  if (selectingStarted_ && !words_.empty()) {
-    const size_t lo = std::min(anchor_, focus_);
-    const size_t hi = std::max(anchor_, focus_);
-    if (lo <= hi) {
-      spans.push_back({lo, std::min(hi, words_.size() - 1)});
-    }
+  std::vector<HighlightSpan> spans = pendingSpans_;
+  if (selectingStarted_) {
+    spans.push_back(liveSelectionSpan(act));
+  }
+  for (HighlightSpan& span : spans) {
+    expandSpanHyphenOnCurrentPage(span);
   }
   normalizeSpans(spans);
   if (spans.empty()) {
@@ -549,7 +787,7 @@ void EpubAnnotationUi::saveToStorage(EpubActivity& act) {
     return;
   }
 
-  if (!act.section) {
+  if (!act.section || !act.epub) {
     act.readerPopup("Could not save");
     exit(act);
     return;
@@ -560,25 +798,29 @@ void EpubAnnotationUi::saveToStorage(EpubActivity& act) {
   bool anyOk = false;
 
   for (const auto& sp : spans) {
-    const std::string seg = extractRangeText(sp.first, sp.second);
+    const HighlightSpan n = normalizedSpan(sp);
+    const std::string seg = extractSpanText(act, n);
     if (seg.empty()) {
       continue;
     }
     EpubAnnotationRecord neu{};
     neu.timestamp = ts;
     neu.text = seg;
-    {
-      const uint16_t s = static_cast<uint16_t>(act.currentSpineIndex);
-      const uint16_t p = static_cast<uint16_t>(act.section->currentPage);
-      neu.startSpine = s;
-      neu.startPage = p;
-      neu.endSpine = s;
-      neu.endPage = p;
+    neu.startSpine = static_cast<uint16_t>(n.startSpine);
+    neu.startPage = static_cast<uint16_t>(n.startPage);
+    neu.endSpine = static_cast<uint16_t>(n.endSpine);
+    neu.endPage = static_cast<uint16_t>(n.endPage);
+    if (n.startSpine == n.endSpine && n.startPage == n.endPage) {
+      neu.pageWordLo = static_cast<uint16_t>(n.startWord);
+      neu.pageWordHi = static_cast<uint16_t>(n.endWord);
+      neu.startPageWordLo = EpubAnnotations::kWildcard;
+      neu.startPageWordHi = EpubAnnotations::kWildcard;
+    } else {
+      neu.startPageWordLo = static_cast<uint16_t>(n.startWord);
+      neu.startPageWordHi = EpubAnnotations::kThroughEndOfPage;
+      neu.pageWordLo = 0;
+      neu.pageWordHi = static_cast<uint16_t>(n.endWord);
     }
-    neu.pageWordLo = static_cast<uint16_t>(sp.first);
-    neu.pageWordHi = static_cast<uint16_t>(sp.second);
-    neu.startPageWordLo = EpubAnnotations::kWildcard;
-    neu.startPageWordHi = EpubAnnotations::kWildcard;
 
     if (annotations_.appendHighlight(cachePath, act.epub->getSpineItemsCount(), neu, act.currentSpineIndex,
                                      act.section->currentPage)) {

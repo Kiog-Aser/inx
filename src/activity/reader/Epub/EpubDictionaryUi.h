@@ -41,6 +41,7 @@ class EpubDictionaryUi {
   void drawFocusHighlight(EpubActivity& act);
   void drawDefinitionPanel(EpubActivity& act);
   void performLookup(EpubActivity& act);
+  std::string dictionaryQueryFromFocus(EpubActivity& act, bool keepLineBreakHyphen);
   void ensureDictionaryOpen(EpubActivity& act);
   void openFolder(const std::string& folderName);
   bool lookupInFolder(EpubActivity& act, const std::string& folderName, const std::string& queryWord,

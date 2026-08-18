@@ -409,10 +409,18 @@ bool EpubAnnotations::tryAppendPreciseHighlightRanges(const EpubAnnotationRecord
   const size_t n = annWords.size();
 
   auto appendRange = [&](const size_t wordLo, const size_t wordHi) {
-    if (n == 0 || wordLo >= n || wordHi >= n || wordLo > wordHi) {
+    if (n == 0) {
       return;
     }
-    raw.emplace_back(wordLo, wordHi);
+    size_t lo = wordLo;
+    size_t hi = wordHi;
+    if (hi >= n || hi == static_cast<size_t>(EpubAnnotations::kThroughEndOfPage)) {
+      hi = n - 1;
+    }
+    if (lo >= n || lo > hi) {
+      return;
+    }
+    raw.emplace_back(lo, hi);
   };
 
   if (ss == es && sp == ep) {
@@ -429,22 +437,20 @@ bool EpubAnnotations::tryAppendPreciseHighlightRanges(const EpubAnnotationRecord
     return true;
   }
 
-  if (ss != es || cs != ss) {
-    return false;
-  }
-
-  if (cp == sp && cp < ep) {
-    if (r.startPageWordLo != EpubAnnotations::kWildcard) {
-      appendRange(static_cast<size_t>(r.startPageWordLo), static_cast<size_t>(r.startPageWordHi));
-      return true;
+  const bool onStart = cs == ss && cp == sp;
+  const bool onEnd = cs == es && cp == ep;
+  if (onStart && !onEnd) {
+    if (r.startPageWordLo == EpubAnnotations::kWildcard) {
+      return false;
     }
-    return false;
+    appendRange(static_cast<size_t>(r.startPageWordLo), static_cast<size_t>(r.startPageWordHi));
+    return true;
   }
-  if (cp == ep && cp > sp) {
+  if (onEnd && !onStart) {
     appendRange(static_cast<size_t>(r.pageWordLo), static_cast<size_t>(r.pageWordHi));
     return true;
   }
-  if (cp > sp && cp < ep && n > 0) {
+  if (!onStart && !onEnd && n > 0) {
     appendRange(0, n - 1);
     return true;
   }

@@ -23,6 +23,11 @@ struct PageWordHit {
   /** Footnote/endnote link target ("<resolvedPath>#<fragmentId>", empty path = same file), or empty if
    * this word is not a footnote marker. */
   std::string footnoteTarget;
+  /** Line-break hyphenation: this token ends with '-' and the next token (lower on the page, or the
+   *  first word of the next page) is the remainder of the same word ("dictio-" / "nary"). */
+  bool hyphenJoinNext = false;
+  /** This token continues a previous hyphen-broken token. */
+  bool hyphenJoinPrev = false;
 };
 
 /**
@@ -32,3 +37,21 @@ struct PageWordHit {
 void buildPageWordIndex(const Page& page, GfxRenderer& renderer, int bodyFontId, int headerFontId, int marginLeft,
                         int marginTop, std::vector<PageWordHit>& out, std::vector<size_t>* lineStartsOut = nullptr,
                         bool omitStoredWordStrings = false);
+
+/** True when @p text looks like a hyphenation prefix at a line wrap (letter, then ASCII '-'). */
+bool isLineBreakHyphenPrefix(const std::string& text);
+
+/** Sets hyphenJoinNext / hyphenJoinPrev for same-page line wraps. Last-word prefixes also get
+ *  hyphenJoinNext so a following page can continue the word. */
+void markHyphenJoins(std::vector<PageWordHit>& words);
+
+/** Inclusive token range around @p index that belongs to the same hyphen-broken word. */
+void expandHyphenJoinRange(const std::vector<PageWordHit>& words, size_t index, size_t& lo, size_t& hi);
+
+/**
+ * Concatenate words[@p lo .. @p hi]. Hyphen-join boundaries omit the extra space; when
+ * @p keepLineBreakHyphen is false the trailing '-' on a prefix token is stripped
+ * ("dictio-" + "nary" → "dictionary").
+ */
+std::string joinedHyphenRangeText(const std::vector<PageWordHit>& words, size_t lo, size_t hi,
+                                  bool keepLineBreakHyphen);

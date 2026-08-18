@@ -130,7 +130,7 @@ inline void moveFocusLine(const std::vector<PageWordHit>& words, const std::vect
   focus = wordOnLineNearestX(words, lineFirst, lineIdx, targetX);
 }
 
-/** @return 0 none, 1 bounce consumed (no move), 2 moved */
+/** @return 0 none, 1 bounce consumed (no move), 2 moved from a tap, 3 moved from hold-repeat */
 template <typename MoveWord, typename MoveLine>
 int handleDpad(const MappedInputManager& mapped, EdgeState& edge, int& repeatDir, unsigned long& repeatNextMs,
                const unsigned long now, MoveWord&& moveWord, MoveLine&& moveLine) {
@@ -197,7 +197,7 @@ int handleDpad(const MappedInputManager& mapped, EdgeState& edge, int& repeatDir
     return 0;
   }
   repeatNextMs = now + kRepeatIntervalMs;
-  return 2;
+  return 3;
 }
 
 }  // namespace WordOverlayNav
