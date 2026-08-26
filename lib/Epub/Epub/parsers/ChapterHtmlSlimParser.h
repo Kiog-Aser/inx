@@ -323,6 +323,8 @@ class ChapterHtmlSlimParser {
   int spaceToKeepForBody() const;
   int clampSpacingToKeepBody(int px) const;
   bool pageHasPriorContent() const;
+  bool pageHasBodyText() const;
+  bool openingWaitingForBody() const;
   void addCenteredDivider(const char* text);
   void addQuietSceneBreak();
   void addHorizontalRule(const std::string& tagLower = "hr", const std::string& classAttr = "",

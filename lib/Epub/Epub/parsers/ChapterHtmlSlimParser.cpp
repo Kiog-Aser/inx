@@ -1274,7 +1274,7 @@ void ChapterHtmlSlimParser::applyVerticalSpacing(const int px) {
     return;
   }
   int add = px;
-  if (keepBodyOnThisPage_ || inHeader) {
+  if (keepBodyOnThisPage_ || inHeader || openingWaitingForBody()) {
     add = clampSpacingToKeepBody(add);
     if (add <= 0) {
       return;
@@ -1701,6 +1701,11 @@ int ChapterHtmlSlimParser::cssBorderInnerGapPx() const {
 
 void ChapterHtmlSlimParser::applyMinHeightPadding() {
   if (currentBlockMinHeightPx <= 0) return;
+  // Print CSS often gives chapter numbers min-height: 80%/100% so the heading sits on its own leaf.
+  // On this screen that is a blank page with "9" at the top - skip it until body text is on the page.
+  if (inHeader || openingWaitingForBody()) {
+    return;
+  }
   // Skip if the block wrapped onto a new page (content start Y no longer comparable to the current cursor).
   if (currentPageNextY < currentBlockContentStartY) return;
   const int contentHeight = currentPageNextY - currentBlockContentStartY;
@@ -2657,11 +2662,16 @@ void ChapterHtmlSlimParser::addLineToPage(TextBlock&& line) {
   if (line.isEmpty()) return;
 
   if (currentPageNextY + lineHeight > viewportHeight) {
-    finalizeOpenBorderBoxesForPageBreak();
-    completeCurrentPage();
-    currentPage.reset(new Page());
-    currentPageNextY = 0;
-    restartOpenBorderBoxesAfterPageBreak();
+    if (openingWaitingForBody()) {
+      currentPageNextY =
+          static_cast<int16_t>(std::max(0, static_cast<int>(viewportHeight) - lineHeight));
+    } else {
+      finalizeOpenBorderBoxesForPageBreak();
+      completeCurrentPage();
+      currentPage.reset(new Page());
+      currentPageNextY = 0;
+      restartOpenBorderBoxesAfterPageBreak();
+    }
   }
 
   if (!currentPage) currentPage.reset(new Page());
@@ -2678,6 +2688,9 @@ void ChapterHtmlSlimParser::addLineToPage(TextBlock&& line) {
   }
 
   currentPageNextY += lineHeight;
+  if (!inHeader && currentBlockFontId < 0) {
+    keepBodyOnThisPage_ = false;
+  }
 }
 
 void ChapterHtmlSlimParser::finalizeOpenBorderBoxesForPageBreak() {
@@ -2730,6 +2743,29 @@ bool ChapterHtmlSlimParser::pageHasPriorContent() const {
   return currentPage && !currentPage->elements.empty() && currentPageNextY > viewportHeight / 8;
 }
 
+bool ChapterHtmlSlimParser::pageHasBodyText() const {
+  if (!currentPage) {
+    return false;
+  }
+  for (const auto& el : currentPage->elements) {
+    if (!el) {
+      continue;
+    }
+    switch (el->getTag()) {
+      case TAG_PageLine:
+      case TAG_PageSmallCaps:
+      case TAG_PageDropCap:
+      case TAG_PageTable:
+        return true;
+      default:
+        break;
+    }
+  }
+  return false;
+}
+
+bool ChapterHtmlSlimParser::openingWaitingForBody() const { return keepBodyOnThisPage_ && !pageHasBodyText(); }
+
 void ChapterHtmlSlimParser::noteChapterMarker(const std::string& title) {
   if (imagePrefetchPassOnly_ || title.empty()) {
     return;
@@ -2751,6 +2787,11 @@ void ChapterHtmlSlimParser::noteChapterMarker(const std::string& title) {
 void ChapterHtmlSlimParser::startChapterOpening() {
   if (currentTextBlock && !currentTextBlock->isEmpty()) {
     makePages();
+  }
+  // EPUB CSS repeats page-break-before on the number, the title, the wrapping div, and the first
+  // paragraph. Breaking on each of those leaves a lone "9" on an otherwise empty page.
+  if (openingWaitingForBody()) {
+    return;
   }
   forcePageBreak();
   keepBodyOnThisPage_ = true;
@@ -2789,6 +2830,9 @@ void ChapterHtmlSlimParser::emitChapterHeading(const std::string& title) {
 }
 
 void ChapterHtmlSlimParser::forcePageBreak() {
+  if (openingWaitingForBody()) {
+    return;
+  }
   if (currentTextBlock && !currentTextBlock->isEmpty()) {
     makePages();
   }
@@ -3052,9 +3096,6 @@ void ChapterHtmlSlimParser::makePages(bool deferClosingSpacingToCaller) {
   pendingBorderBoxElem_ = nullptr;
   currentBlockMinHeightPx = 0;
   currentBlockFontId = -1;
-  if (!inHeader && keepBodyOnThisPage_ && currentPage && !currentPage->elements.empty()) {
-    keepBodyOnThisPage_ = false;
-  }
 }
 
 /**

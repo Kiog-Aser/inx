@@ -19,7 +19,7 @@
 #include "parsers/ChapterHtmlSlimParser.h"
 
 namespace {
-constexpr uint8_t SECTION_FILE_VERSION = 77;  // 77: chapter-opening layout + in-section chapter markers
+constexpr uint8_t SECTION_FILE_VERSION = 78;  // 78: keep chapter number + first body on the same page
 constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(float) + sizeof(bool) +
                                  sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) +
                                  sizeof(bool) + sizeof(uint16_t) + sizeof(uint32_t);
