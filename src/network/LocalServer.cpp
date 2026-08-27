@@ -2161,8 +2161,8 @@ void LocalServer::handleSettingsUpdate() const {
       readerChanged = true;
     } else if (strcmp(key, "readerImageGrayscale") == 0) {
       READER_SETTINGS.readerImageGrayscale = (value >= 0 && value < SystemSetting::READER_IMAGE_QUALITY_COUNT)
-                                          ? (uint8_t)value
-                                          : SystemSetting::READER_IMAGE_LOW;
+                                                 ? (uint8_t)value
+                                                 : SystemSetting::READER_IMAGE_LOW;
       readerChanged = true;
     } else if (strcmp(key, "readerSmartRefreshOnImages") == 0) {
       READER_SETTINGS.readerSmartRefreshOnImages = (uint8_t)value ? 1 : 0;

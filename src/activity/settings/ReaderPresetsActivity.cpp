@@ -62,7 +62,8 @@ const char* xtcAutoTurnLabel() {
 
 const char* xtcRefreshLabel() {
   static char buf[12];
-  snprintf(buf, sizeof(buf), "%u page%s", READER_SETTINGS.xtcRefreshFrequency, READER_SETTINGS.xtcRefreshFrequency == 1 ? "" : "s");
+  snprintf(buf, sizeof(buf), "%u page%s", READER_SETTINGS.xtcRefreshFrequency,
+           READER_SETTINGS.xtcRefreshFrequency == 1 ? "" : "s");
   return buf;
 }
 
@@ -90,7 +91,7 @@ const char* systemAutoTurnLabel() {
 constexpr int kButtonActionRowCount = 8;
 
 uint8_t ReaderSetting::* const kButtonActionFields[kButtonActionRowCount] = {
-    &ReaderSetting::btnUpShortAction,    &ReaderSetting::btnUpLongAction,   &ReaderSetting::btnDownShortAction,
+    &ReaderSetting::btnUpShortAction,    &ReaderSetting::btnUpLongAction,    &ReaderSetting::btnDownShortAction,
     &ReaderSetting::btnDownLongAction,   &ReaderSetting::btnLeftShortAction, &ReaderSetting::btnLeftLongAction,
     &ReaderSetting::btnRightShortAction, &ReaderSetting::btnRightLongAction};
 
@@ -118,18 +119,10 @@ const char* buttonActionRowLabel(const int idx, const bool x3) {
 }
 
 const char* readerButtonActionLabel(const uint8_t action) {
-  static const char* const kLabels[] = {"None",
-                                        "Page Next",
-                                        "Page Previous",
-                                        "Open Settings",
-                                        "Annotate",
-                                        "Dictionary",
-                                        "Page Refresh",
-                                        "Chapter Skip Next",
-                                        "Chapter Skip Previous",
-                                        "Bookmark",
-                                        "Table of Contents",
-                                        "Change Orientation"};
+  static const char* const kLabels[] = {"None",          "Page Next",         "Page Previous",
+                                        "Open Settings", "Annotate",          "Dictionary",
+                                        "Page Refresh",  "Chapter Skip Next", "Chapter Skip Previous",
+                                        "Bookmark",      "Table of Contents", "Change Orientation"};
   if (action >= SystemSetting::READER_BUTTON_ACTION_COUNT) {
     return "None";
   }
@@ -160,7 +153,7 @@ ReaderPresetsActivity::ReaderPresetsActivity(GfxRenderer& renderer, MappedInputM
 
 void ReaderPresetsActivity::onEnter() {
   Serial.printf("[%lu] [MEM] Free heap at ReaderPresetsActivity::onEnter(): %u bytes\n", millis(),
-               static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)));
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)));
   READER_PRESETS.load();
   const int screenH = renderer.getScreenHeight();
   const int listTop = mainHeaderDividerY();
@@ -602,7 +595,8 @@ void ReaderPresetsActivity::openSelectorForRow(const int row) {
   if (xtcLocalRow == 4) {
     const int idx = READER_SETTINGS.xtcShortPwrBtn == SystemSetting::XTC_POWER_PAGE_REFRESH ? 1 : 0;
     openGenericSelector("Power Button", {"Next", "Page Refresh"}, idx, [](const int chosen) {
-      READER_SETTINGS.xtcShortPwrBtn = chosen == 1 ? SystemSetting::XTC_POWER_PAGE_REFRESH : SystemSetting::XTC_POWER_NEXT;
+      READER_SETTINGS.xtcShortPwrBtn =
+          chosen == 1 ? SystemSetting::XTC_POWER_PAGE_REFRESH : SystemSetting::XTC_POWER_NEXT;
       READER_SETTINGS.saveToFile();
     });
     return;

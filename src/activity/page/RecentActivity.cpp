@@ -621,7 +621,7 @@ void RecentActivity::onEnter() {
   Activity::onEnter();
 
   Serial.printf("[%lu] [MEM] Free heap at RecentActivity::onEnter(): %u bytes\n", millis(),
-               static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)));
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)));
 
   freeRecentPageBuffer();
   layoutEngine_.reset();

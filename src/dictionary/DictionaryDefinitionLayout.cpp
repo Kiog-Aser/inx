@@ -215,8 +215,8 @@ std::vector<DefinitionBlock> parseHtmlToBlocks(const std::string& html) {
         t.pop_back();
       }
     }
-    const bool hasContent =
-        std::any_of(current.runs.begin(), current.runs.end(), [](const DefinitionTextRun& r) { return !r.text.empty(); });
+    const bool hasContent = std::any_of(current.runs.begin(), current.runs.end(),
+                                        [](const DefinitionTextRun& r) { return !r.text.empty(); });
     if (hasContent) {
       blocks.push_back(current);
     }

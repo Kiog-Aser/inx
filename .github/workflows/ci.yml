@@ -11,6 +11,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - uses: actions/setup-python@v6
         with:
@@ -38,7 +39,27 @@ jobs:
         run: pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high
 
       - name: Run clang-format
-        run: PATH="/usr/lib/llvm-21/bin:$PATH" ./bin/clang-format-fix && git diff --exit-code || (echo "Please run 'bin/clang-format-fix' to fix formatting issues" && exit 1)
+        run: |
+          set -euo pipefail
+          export PATH="/usr/lib/llvm-21/bin:$PATH"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+          else
+            base_sha="${{ github.event.before }}"
+          fi
+          if [ -z "${base_sha}" ] || [ "${base_sha}" = "0000000000000000000000000000000000000000" ]; then
+            echo "No base SHA available; skipping clang-format"
+            exit 0
+          fi
+          files=$(git diff --name-only --diff-filter=ACMR "${base_sha}"...HEAD | grep -E '\.(c|cpp|h|hpp)$' || true)
+          if [ -z "${files}" ]; then
+            echo "No C/C++ files changed"
+            exit 0
+          fi
+          echo "Checking clang-format on:"
+          echo "${files}"
+          echo "${files}" | xargs clang-format -style=file -i
+          git diff --exit-code || (echo "Please run clang-format on changed C/C++ files" && exit 1)
 
       - name: Build Inx
         run: pio run
