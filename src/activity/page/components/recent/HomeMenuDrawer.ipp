@@ -424,8 +424,6 @@ class RecentActivity::HomeMenuDrawer {
       return;
     }
 
-    const int rowH = mode_ == HomeDrawerMode::Main ? kHomeDrawerMainRowH : kHomeDrawerRowH;
-    const int headerH = headerHeight();
     for (int row = 0; row < rowsPerPage_; ++row) {
       const int itemIndex = scroll_ + row;
       if (itemIndex >= count) {
@@ -534,13 +532,13 @@ class RecentActivity::HomeMenuDrawer {
   void renderQuickDeleteConfirm(const char* heading, const char* subtext) {
     const int contentTop = drawerY_ + headerHeight();
     const int centerY = contentTop + (drawerH_ - headerHeight() - 46) / 2;
-    const std::string title =
+    const std::string itemTitle =
         selectedBookRow_.label.empty() ? "Selected item" : renderer_.text.truncate(ATKINSON_HYPERLEGIBLE_10_FONT_ID,
                                                                                     selectedBookRow_.label.c_str(),
                                                                                     drawerW_ - kHomeDrawerPadX * 2);
 
     renderer_.text.centered(ATKINSON_HYPERLEGIBLE_12_FONT_ID, centerY - 34, heading, true, EpdFontFamily::BOLD);
-    renderer_.text.centered(ATKINSON_HYPERLEGIBLE_10_FONT_ID, centerY - 4, title.c_str(), true,
+    renderer_.text.centered(ATKINSON_HYPERLEGIBLE_10_FONT_ID, centerY - 4, itemTitle.c_str(), true,
                             EpdFontFamily::REGULAR);
     renderer_.text.centered(ATKINSON_HYPERLEGIBLE_8_FONT_ID, centerY + 24, subtext, true, EpdFontFamily::REGULAR);
   }
@@ -780,20 +778,20 @@ class RecentActivity::HomeMenuDrawer {
       int recentIndex = -1;
       const RecentBook* recent = findRecentBookByPath(book.path, &recentIndex);
       const std::string cachePath = recent ? cachePathForRecentBook(*recent) : epubCachePathForBookPath(book.path);
-      std::string title = recent && !recent->title.empty() ? recent->title : book.title;
+      std::string bookTitle = recent && !recent->title.empty() ? recent->title : book.title;
       std::string author = recent && !recent->author.empty() ? recent->author : book.author;
-      if (!hadIndex && (title.empty() || author.empty()) && !cachePath.empty()) {
+      if (!hadIndex && (bookTitle.empty() || author.empty()) && !cachePath.empty()) {
         BookReadingStats stats;
         if (loadBookStats(cachePath.c_str(), stats)) {
-          if (title.empty()) {
-            title = stats.title;
+          if (bookTitle.empty()) {
+            bookTitle = stats.title;
           }
           if (author.empty()) {
             author = stats.author;
           }
         }
       }
-      addRow(book.path, title, author, cachePath, recentIndex);
+      addRow(book.path, bookTitle, author, cachePath, recentIndex);
     }
 
     const auto& books = RECENT_BOOKS.getBooks();

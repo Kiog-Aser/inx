@@ -69,7 +69,7 @@ const char* xtcRefreshLabel() {
 const char* systemRefreshLabel() {
   static char buf[12];
   const int pages = READER_SETTINGS.getRefreshFrequency();
-  snprintf(buf, sizeof(buf), "%u page%s", pages, pages == 1 ? "" : "s");
+  snprintf(buf, sizeof(buf), "%d page%s", pages, pages == 1 ? "" : "s");
   return buf;
 }
 

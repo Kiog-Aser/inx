@@ -793,7 +793,7 @@ void RecentActivity::renderGridItem(int gridX, int gridY, int startY, const Rece
   const int drawW = std::max(1, containerWidth * kGridThumbnailWidthScalePercent / 100);
   const int drawH = containerHeight;
   const int drawX = itemX + (containerWidth - drawW) / 2;
-  const int drawY = itemY + (containerHeight - drawH) / 2;
+  const int drawY = itemY;
 
   if (selected) {
     const int overlayX = std::max(0, drawX - 8);

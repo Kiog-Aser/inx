@@ -241,7 +241,7 @@ std::vector<DefinitionBlock> parseHtmlToBlocks(const std::string& html) {
       }
       const size_t space = tag.find_first_of(" \t");
       if (space != std::string::npos) {
-        tag = tag.substr(0, space);
+        tag.resize(space);
       }
       if (!tag.empty() && tag.back() == '/') {
         tag.pop_back();
