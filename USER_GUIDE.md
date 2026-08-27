@@ -78,6 +78,8 @@ The File Upload screen allows you to upload new e-books to the device. When you 
 
 See the [webserver docs](./docs/webserver.md) for more information on how to connect to the web server and upload files.
 
+The **Epub** page also accepts **PDF** files that contain selectable text. Your browser converts them to EPUB and uploads the EPUB; the original PDF is not stored. Image-only scans need OCR (or a Calibre EPUB conversion) first. See [PDF Support](./docs/pdf-support.md).
+
 > [!TIP]
 > Advanced users can also manage files programmatically or via the command line using `curl`. See the [webserver docs](./docs/webserver.md) for details.
 
@@ -216,6 +218,6 @@ Accessible by pressing **Confirm** while inside a book.
 
 ## 6. Current Limitations & Roadmap
 
-Please note that this firmware is currently in active development. The following features are **not yet supported** but are planned for future updates:
+Please note that this firmware is currently in active development.
 
-* **Images:** Embedded images in e-books will not render.
+* **Native PDF viewing:** The X4 cannot open `.pdf` files from the library. Import text PDFs from the web **Epub** page (they are converted to EPUB in the browser), or convert them with Calibre. See [PDF Support](./docs/pdf-support.md).

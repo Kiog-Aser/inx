@@ -40,10 +40,11 @@ This document show most common issues and possible solutions while using the dev
 
 **Solutions:**
 
-1. Ensure the file is a valid `.epub` file
-2. Check that the SD card has enough free space
-3. Try uploading a smaller file first to test
-4. Refresh the browser page and try again
+1. Ensure the file is a valid `.epub`, or a text PDF imported from the **Epub** page
+2. For PDFs, confirm you can select text in a PDF viewer; image-only scans need OCR
+3. Check that the SD card has enough free space
+4. Try uploading a smaller file first to test
+5. Refresh the browser page and try again
 
 ### Saved Password Not Working
 

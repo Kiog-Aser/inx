@@ -6,7 +6,7 @@ This guide explains how to connect your Inx Reader to WiFi and use the built-in 
 
 Inx Reader includes a built-in web server that allows you to:
 
-- Upload EPUB files wirelessly from any device on the same WiFi network
+- Upload EPUB files, and text PDFs that the Epub page converts to EPUB, from any device on the same WiFi network
 - Browse and manage files on your device's SD card
 - Create folders to organize your ebooks
 - Delete files and folders
@@ -136,16 +136,15 @@ Click **File Manager** to access file management features.
 
 <img src="./images/wifi/webserver_files.png" width="600">
 
-#### Uploading EPUB Files
+#### Uploading EPUB and PDF Files
 
-1. Click the **+ Add** button in the top-right corner
-2. Select **Upload eBook** from the dropdown menu
-3. Click **Choose File** and select an `.epub` file from your device
-4. Click **Upload**
-5. A progress bar will show the upload status
-6. The page will automatically refresh when the upload is complete
+1. Open the **Epub** page in the web interface
+2. Drop `.epub` or `.pdf` files onto the page, or click **Add Books**
+3. PDF files with selectable text are converted to EPUB in the browser, then uploaded
+4. A progress bar will show import status
+5. The folder list refreshes when the import finishes
 
-**Note:** Only `.epub` files are accepted. Other file types will be rejected.
+**Note:** Image-only PDF scans cannot be converted on the device. OCR them or convert to EPUB with Calibre first. See [PDF Support](./pdf-support.md).
 
 <img src="./images/wifi/webserver_upload.png" width="600">
 
@@ -195,7 +194,7 @@ For power users, you can manage files directly from your terminal using `curl` w
 - **Supported WiFi:** 2.4GHz networks (802.11 b/g/n)
 - **Web Server Port:** 80 (HTTP)
 - **Maximum Upload Size:** Limited by available SD card space
-- **Supported File Format:** `.epub` only
+- **Supported File Format:** `.epub` on the device; `.pdf` files are converted to EPUB in the browser on the Epub page
 - **Browser Compatibility:** All modern browsers (Chrome, Firefox, Safari, Edge)
 
 ### Local Simulator

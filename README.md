@@ -13,6 +13,7 @@ Inx is a community firmware for Xteink e-paper readers. It is focused on a clean
 ## What You Can Do
 
 - Read **EPUB**, **XTC / XTCH**, **TXT**, and **MD** files.
+- Import **PDF** files with selectable text from the web Epub page; they are converted to EPUB in the browser.
 - Browse books from **Recent**, **Library**, **Settings**, **File Transfer**, and **Statistics** tabs.
 - Use EPUB features such as bookmarks, annotations, dictionary lookup, go-to-percent, table of contents, footnotes, per-book settings, and KOReader sync.
 - Render **JPEG**, **PNG**, and **BMP** images directly.
@@ -136,7 +137,7 @@ The local web interface includes:
 
 - **Dashboard**: device status, IP address, Wi-Fi strength, memory, uptime, and quick links.
 - **Files**: browse folders, upload files, create folders, delete files, upload cover art to `/sleep`, and set folder thumbnails.
-- **Epub**: drag-and-drop EPUB imports, folder creation, JPEG optimization, optional packaged device thumbnails, and import progress.
+- **Epub**: drag-and-drop EPUB imports, PDF-to-EPUB conversion for text PDFs, folder creation, JPEG optimization, optional packaged device thumbnails, and import progress.
 - **Tags**: create reusable tags and assign them to indexed books.
 - **Fonts**: build SD-card font packs from TTF/OTF files and upload them to `/fonts`.
 - **Settings**: edit system settings, reader settings, Wi-Fi networks, KOReader settings, and OPDS servers.
@@ -167,6 +168,12 @@ Example SD-card layout:
 ```
 
 Only uncompressed `.dict` files are supported. Compressed `.dict.dz` dictionaries are not supported/must be uncompressed.
+
+## PDF files
+
+The X4 cannot render PDF pages natively. Drop a text PDF on the web **Epub** page and Inx converts it to EPUB in your browser, then uploads the EPUB.
+
+Image-only scans need OCR or a Calibre conversion first. See [PDF Support](./docs/pdf-support.md).
 
 ## Fonts
 

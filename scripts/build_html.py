@@ -11,6 +11,7 @@ JS_EMBEDS = [
     ("data/js/inx_font_pack.js", "src/network/html/InxFontPackJs.generated.h", "INX_FONT_PACK_JS", "INXFP"),
     ("data/js/jszip.min.js", "src/network/html/JsZipMinJs.generated.h", "JSZIP_MIN_JS", "INXJZ9"),
     ("data/js/epub_page.js", "src/network/html/EpubPageJs.generated.h", "EPUB_PAGE_JS", "INXEPUB"),
+    ("data/js/pdf_to_epub.js", "src/network/html/PdfToEpubJs.generated.h", "PDF_TO_EPUB_JS", "INXPDF1"),
     ("data/js/files_page.js", "src/network/html/FilesPageJs.generated.h", "FILES_PAGE_JS", "INXFILES"),
     ("data/js/qr_creator_logo.min.js", "src/network/html/QrCreatorLogoJs.generated.h", "QR_CREATOR_LOGO_JS",
      "INXQR"),

@@ -16,6 +16,13 @@ jobs:
         with:
           python-version: '3.14'
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Test PDF to EPUB converter
+        run: node test/pdf_to_epub/test_pdf_to_epub.js
+
       - name: Install PlatformIO Core
         run: pip install --upgrade platformio
 

@@ -1,5 +1,5 @@
 const SYSTEM_FOLDERS = ["fonts", "sleep"];
-let currentPath="/",generatePackagedThumbnail=!1,jszipLoadPromise=null;function loadJsZip(){return"undefined"!=typeof JSZip?Promise.resolve():(jszipLoadPromise||(jszipLoadPromise=new Promise(function(e,t){var o=document.createElement("script");o.src="/js/jszip.min.js";o.async=!0;o.onload=function(){"undefined"!=typeof JSZip?e():(jszipLoadPromise=null,t(new Error("JSZip init failed")))};o.onerror=function(){jszipLoadPromise=null,t(new Error("JSZip load failed"))};document.head.appendChild(o)})),jszipLoadPromise)}const epubThumbCheckbox=document.getElementById("epubGeneratePackagedThumbnailCheckbox");function isPackagedDeviceThumbnailPath(e){return typeof e=="string"&&e.replace(/\\/g,"/").toLowerCase()=="meta-inf/thumbnail.jpg"}function updateToggleUI(){epubThumbCheckbox&&(epubThumbCheckbox.checked=generatePackagedThumbnail);const e=document.getElementById("optimizerSummaryBanner");if(e){const t="Preserve formats: JPEG/JPG resized and re-encoded in place to max 480×800 at JPEG quality 100%; PNG and others unchanged.",o=generatePackagedThumbnail?" Embeds META-INF/thumbnail.jpg from a cover-like image for fast imports.":" Omits packaged thumbnail; reader builds thumb.bmp from cover on device.";e.textContent=t+o}}function toggleEpubGeneratePackagedThumbnail(){generatePackagedThumbnail=epubThumbCheckbox?epubThumbCheckbox.checked:!generatePackagedThumbnail,localStorage.setItem("epubGeneratePackagedThumbnail",generatePackagedThumbnail),updateToggleUI(),addModalLog("modalLog",generatePackagedThumbnail?"Device thumbnail: will embed META-INF/thumbnail.jpg on import.":"Device thumbnail: will not embed (and strips it if present when re-importing).","success")}function addModalLog(e,t,o="info"){const a=document.getElementById(e);if(a){e=(new Date).toLocaleTimeString();const n=document.createElement("div");n.className=o,n.innerHTML=`[${e}] ${t}`,a.appendChild(n),n.scrollIntoView({behavior:"smooth",block:"nearest"})}}function clearModalLog(e){const t=document.getElementById(e);t&&(t.innerHTML='<div class="info">Ready</div>')}function isCoverImage(e){var t=e.toLowerCase();for(const o of[/cover/i,/titlepage/i,/front[-_]?cover/i,/thumbnail/i,/\/cover\//i,/\/images\/cover/i,/\/img\/cover/i,/\/metadata\/cover/i,/^cover\./i,/^title\./i])if(o.test(t))return!0;return!1}async function resizeJpegInPlace(blob,path,opts){
+let currentPath="/",generatePackagedThumbnail=!1,jszipLoadPromise=null,pdfToEpubLoadPromise=null;function loadJsZip(){return"undefined"!=typeof JSZip?Promise.resolve():(jszipLoadPromise||(jszipLoadPromise=new Promise(function(e,t){var o=document.createElement("script");o.src="/js/jszip.min.js";o.async=!0;o.onload=function(){"undefined"!=typeof JSZip?e():(jszipLoadPromise=null,t(new Error("JSZip init failed")))};o.onerror=function(){jszipLoadPromise=null,t(new Error("JSZip load failed"))};document.head.appendChild(o)})),jszipLoadPromise)}function loadPdfToEpub(){return"undefined"!=typeof InxPdfToEpub?Promise.resolve():(pdfToEpubLoadPromise||(pdfToEpubLoadPromise=new Promise(function(e,t){var o=document.createElement("script");o.src="/js/pdf_to_epub.js";o.async=!0;o.onload=function(){"undefined"!=typeof InxPdfToEpub?e():(pdfToEpubLoadPromise=null,t(new Error("PDF converter init failed")))};o.onerror=function(){pdfToEpubLoadPromise=null,t(new Error("PDF converter load failed"))};document.head.appendChild(o)})),pdfToEpubLoadPromise)}const epubThumbCheckbox=document.getElementById("epubGeneratePackagedThumbnailCheckbox");function isPackagedDeviceThumbnailPath(e){return typeof e=="string"&&e.replace(/\\/g,"/").toLowerCase()=="meta-inf/thumbnail.jpg"}function updateToggleUI(){epubThumbCheckbox&&(epubThumbCheckbox.checked=generatePackagedThumbnail);const e=document.getElementById("optimizerSummaryBanner");if(e){const t="Preserve formats: JPEG/JPG resized and re-encoded in place to max 480×800 at JPEG quality 100%; PNG and others unchanged.",o=generatePackagedThumbnail?" Embeds META-INF/thumbnail.jpg from a cover-like image for fast imports.":" Omits packaged thumbnail; reader builds thumb.bmp from cover on device.";e.textContent=t+o}}function toggleEpubGeneratePackagedThumbnail(){generatePackagedThumbnail=epubThumbCheckbox?epubThumbCheckbox.checked:!generatePackagedThumbnail,localStorage.setItem("epubGeneratePackagedThumbnail",generatePackagedThumbnail),updateToggleUI(),addModalLog("modalLog",generatePackagedThumbnail?"Device thumbnail: will embed META-INF/thumbnail.jpg on import.":"Device thumbnail: will not embed (and strips it if present when re-importing).","success")}function addModalLog(e,t,o="info"){const a=document.getElementById(e);if(a){e=(new Date).toLocaleTimeString();const n=document.createElement("div");n.className=o,n.innerHTML=`[${e}] ${t}`,a.appendChild(n),n.scrollIntoView({behavior:"smooth",block:"nearest"})}}function clearModalLog(e){const t=document.getElementById(e);t&&(t.innerHTML='<div class="info">Ready</div>')}function isCoverImage(e){var t=e.toLowerCase();for(const o of[/cover/i,/titlepage/i,/front[-_]?cover/i,/thumbnail/i,/\/cover\//i,/\/images\/cover/i,/\/img\/cover/i,/\/metadata\/cover/i,/^cover\./i,/^title\./i])if(o.test(t))return!0;return!1}async function resizeJpegInPlace(blob,path,opts){
 opts=opts||{};const maxW=void 0!==opts.maxW?opts.maxW:480,maxH=void 0!==opts.maxH?opts.maxH:800,quality=void 0!==opts.quality?opts.quality:1;const ab=await blob.arrayBuffer(),typed=new Blob([ab],{type:"image/jpeg"});let sw,sh,drawSrc;try{if(typeof createImageBitmap=="function"){drawSrc=await createImageBitmap(typed);sw=drawSrc.width;sh=drawSrc.height}else throw 0}catch(_){await new Promise((ok,err)=>{const I=new Image,u=URL.createObjectURL(typed);I.onload=()=>{URL.revokeObjectURL(u);drawSrc=I;sw=I.width;sh=I.height;ok()};I.onerror=()=>{URL.revokeObjectURL(u);err(new Error("Failed to load image: "+path))};I.src=u})}
 let tw=sw,th=sh;const needsResize=maxW<sw||maxH<sh;if(needsResize){const scale=Math.min(maxW/sw,maxH/sh);tw=Math.max(1,Math.floor(sw*scale));th=Math.max(1,Math.floor(sh*scale))}
 const U=document.createElement("canvas");U.width=tw;U.height=th;const x=U.getContext("2d");x.imageSmoothingEnabled=!0;x.imageSmoothingQuality="high";x.drawImage(drawSrc,0,0,tw,th);
@@ -165,8 +165,35 @@ function setUploadStatus(text, count, percent, visible, state) {
   if (fill && percent !== undefined) fill.style.width = Math.max(0, Math.min(100, percent)) + "%";
 }
 
-function filterEpubFiles(fileList) {
-  return Array.from(fileList).filter((f) => f.name.toLowerCase().endsWith(".epub"));
+function filterImportFiles(fileList) {
+  return Array.from(fileList).filter((f) => {
+    const name = f.name.toLowerCase();
+    return name.endsWith(".epub") || name.endsWith(".pdf");
+  });
+}
+
+async function convertPdfToEpubFile(file) {
+  await loadJsZip();
+  await loadPdfToEpub();
+  addModalLog("modalLog", "Converting PDF to EPUB: " + file.name, "info");
+  const converted = await InxPdfToEpub.toEpubBlob(await file.arrayBuffer(), {
+    filename: file.name,
+    JSZip: JSZip,
+  });
+  (converted.warnings || []).forEach((warning) => addModalLog("modalLog", warning, "info"));
+  addModalLog(
+    "modalLog",
+    "Converted " + file.name + " -> " + converted.filename + " (" + converted.chapterCount + " chapter(s)).",
+    "success"
+  );
+  return { blob: converted.blob, name: converted.filename };
+}
+
+async function prepareImportFile(file) {
+  if (file.name.toLowerCase().endsWith(".pdf")) {
+    return convertPdfToEpubFile(file);
+  }
+  return { blob: file, name: file.name };
 }
 
 // Optimizes and uploads a batch of EPUB files straight to destPath, with progress shown inline on the
@@ -186,20 +213,26 @@ async function uploadEpubFiles(files, destPath) {
   );
 
   const prepared = [];
+  const failed = [];
   for (let idx = 0; idx < files.length; idx++) {
     const file = files[idx];
     const prepPct = Math.round((idx / files.length) * 50);
     setUploadStatus("Preparing " + file.name, idx + 1 + "/" + files.length, prepPct, true);
     addModalLog("modalLog", "--- " + file.name + " ---", "info");
-    const blob = await optimizeEPUB(file);
-    prepared.push({ blob, name: file.name });
+    try {
+      const imported = await prepareImportFile(file);
+      const blob = await optimizeEPUB(new File([imported.blob], imported.name, { type: "application/epub+zip" }));
+      prepared.push({ blob, name: imported.name, originalName: file.name });
+    } catch (e) {
+      addModalLog("modalLog", "Prepare failed: " + file.name + " (" + e.message + ")", "error");
+      failed.push(file.name);
+    }
   }
 
   let succeeded = 0;
-  const failed = [];
   for (let idx = 0; idx < prepared.length; idx++) {
     const { blob, name } = prepared[idx];
-    const uploadPct = 50 + Math.round((idx / prepared.length) * 50);
+    const uploadPct = 50 + Math.round((idx / Math.max(1, prepared.length)) * 50);
     setUploadStatus("Uploading " + name, idx + 1 + "/" + prepared.length, uploadPct, true);
     try {
       await uploadBlobToPath(blob, name, destPath);
@@ -220,10 +253,10 @@ async function uploadEpubFiles(files, destPath) {
 function handleFileInputChange() {
   const input = document.getElementById("fileInput");
   if (!input.files || !input.files.length) return;
-  const files = filterEpubFiles(input.files);
+  const files = filterImportFiles(input.files);
   input.value = "";
   if (!files.length) {
-    addModalLog("modalLog", "No .epub files selected.", "error");
+    addModalLog("modalLog", "No .epub or .pdf files selected.", "error");
     return;
   }
   uploadEpubFiles(files, currentPath).catch((e) => addModalLog("modalLog", "Import failed: " + e.message, "error"));
@@ -378,9 +411,9 @@ function addDropHandlers(el, onDrop) {
     e.stopPropagation();
     el.classList.remove("dragover");
     if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
-    const files = filterEpubFiles(e.dataTransfer.files);
+    const files = filterImportFiles(e.dataTransfer.files);
     if (!files.length) {
-      addModalLog("modalLog", "Dropped file(s) ignored - only .epub files are accepted.", "error");
+      addModalLog("modalLog", "Dropped file(s) ignored - only .epub and .pdf files are accepted.", "error");
       return;
     }
     onDrop(files);

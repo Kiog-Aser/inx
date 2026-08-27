@@ -39,6 +39,7 @@
 #include "html/HomePageHtml.generated.h"
 #include "html/InxFontPackJs.generated.h"
 #include "html/JsZipMinJs.generated.h"
+#include "html/PdfToEpubJs.generated.h"
 #include "html/QrCreatorLogoJs.generated.h"
 #include "html/SettingsPageHtml.generated.h"
 #include "html/TagsPageHtml.generated.h"
@@ -667,6 +668,7 @@ void LocalServer::begin() {
   server->on("/js/jszip.min.js", HTTP_GET, [this] { handleJsZipMinJs(); });
   server->on("/js/qr_creator_logo.min.js", HTTP_GET, [this] { handleQrCreatorLogoJs(); });
   server->on("/js/epub_page.js", HTTP_GET, [this] { handleEpubPageJs(); });
+  server->on("/js/pdf_to_epub.js", HTTP_GET, [this] { handlePdfToEpubJs(); });
   server->on("/js/files_page.js", HTTP_GET, [this] { handleFilesPageJs(); });
 
   server->on("/api/status", HTTP_GET, [this] { handleStatus(); });
@@ -712,6 +714,7 @@ void LocalServer::begin() {
   Serial.printf("[%lu] [WEB] [MEM] Free heap after route setup: %d bytes\n", millis(), ESP.getFreeHeap());
   Serial.printf("✓ jszip.min.js from firmware flash (%u bytes)\n", static_cast<unsigned>(sizeof(JSZIP_MIN_JS) - 1));
   Serial.printf("✓ epub_page.js from firmware flash (%u bytes)\n", static_cast<unsigned>(sizeof(EPUB_PAGE_JS) - 1));
+  Serial.printf("✓ pdf_to_epub.js from firmware flash (%u bytes)\n", static_cast<unsigned>(sizeof(PDF_TO_EPUB_JS) - 1));
   Serial.printf("✓ files_page.js from firmware flash (%u bytes)\n", static_cast<unsigned>(sizeof(FILES_PAGE_JS) - 1));
   Serial.printf("✓ inx_font_pack.js from firmware flash (%u bytes)\n",
                 static_cast<unsigned>(sizeof(INX_FONT_PACK_JS) - 1));
@@ -1032,6 +1035,10 @@ void LocalServer::handleQrCreatorLogoJs() const {
 
 void LocalServer::handleEpubPageJs() const {
   server->send_P(200, PSTR("text/javascript; charset=utf-8"), EPUB_PAGE_JS, sizeof(EPUB_PAGE_JS) - 1);
+}
+
+void LocalServer::handlePdfToEpubJs() const {
+  server->send_P(200, PSTR("text/javascript; charset=utf-8"), PDF_TO_EPUB_JS, sizeof(PDF_TO_EPUB_JS) - 1);
 }
 
 void LocalServer::handleFilesPageJs() const {

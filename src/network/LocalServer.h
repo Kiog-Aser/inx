@@ -72,6 +72,7 @@ class LocalServer {
   void handleJsZipMinJs() const;
   void handleQrCreatorLogoJs() const;
   void handleEpubPageJs() const;
+  void handlePdfToEpubJs() const;
   void handleFilesPageJs() const;
   void handleNotFound() const;
   void handleStatus() const;
